@@ -6,6 +6,7 @@
     <meta name="theme-color" content="#4f46e5">
     <title>Chess.com 戰績對比與 AI 資料生成器 (進階版)</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.3/chart.umd.min.js"></script>
     <style>
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; -webkit-text-size-adjust: 100%; }
         /* 避免 iOS Safari 自動縮放，輸入字級至少 16px */
@@ -121,6 +122,30 @@
 
             <!-- 輸出 -->
             <div id="outputSection" class="hidden">
+
+                <!-- 圖表區 -->
+                <div id="chartSection" class="mb-8">
+                    <h2 class="text-base sm:text-lg font-bold text-slate-900 flex items-center mb-3">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 mr-2 text-indigo-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                        </svg>
+                        數據視覺化
+                    </h2>
+                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                        <div class="bg-white p-3 sm:p-4 rounded-xl border border-slate-200 shadow-sm lg:col-span-2">
+                            <h3 class="text-sm font-semibold text-slate-700 mb-2">勝率對比 (當期 vs 前期)</h3>
+                            <div class="relative h-56 sm:h-64"><canvas id="chartWinRate"></canvas></div>
+                        </div>
+                        <div class="bg-white p-3 sm:p-4 rounded-xl border border-slate-200 shadow-sm">
+                            <h3 class="text-sm font-semibold text-slate-700 mb-2">當期勝/負/和分布</h3>
+                            <div class="relative h-56 sm:h-64"><canvas id="chartWLD"></canvas></div>
+                        </div>
+                        <div class="bg-white p-3 sm:p-4 rounded-xl border border-slate-200 shadow-sm">
+                            <h3 class="text-sm font-semibold text-slate-700 mb-2">執子勝率 (白方 vs 黑方)</h3>
+                            <div class="relative h-56 sm:h-64"><canvas id="chartColor"></canvas></div>
+                        </div>
+                    </div>
+                </div>
                 <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-3 gap-3">
                     <h2 class="text-base sm:text-lg font-bold text-slate-900 flex items-center">
                         <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 mr-2 text-indigo-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -382,6 +407,9 @@
                 showStatus(`資料獲取成功！當期 ${currentGames.length} 局，前期 ${prevGames.length} 局。已輸出 ${reportInfo.pgnCount} 局 PGN。`, 'success');
                 document.getElementById('outputSection').classList.remove('hidden');
 
+                // 區塊顯示後再繪圖（canvas 需有實際版面尺寸）
+                renderCharts(currentStats, prevStats, selectedTypes);
+
             } catch (error) {
                 console.error(error);
                 showStatus('擷取資料時發生錯誤，請稍後再試。', 'error');
@@ -633,6 +661,81 @@
 
             document.getElementById('outputText').value = text;
             return { pgnCount: selectedGames.length };
+        }
+
+        // ===== 圖表渲染 (Chart.js) =====
+        const chartInstances = {}; // 保存實例，重繪前先 destroy
+
+        /** 依當期/前期統計繪製三張圖；Chart.js 未載入則隱藏圖表區 */
+        function renderCharts(current, prev, selectedTypes) {
+            const chartSection = document.getElementById('chartSection');
+
+            if (typeof Chart === 'undefined') {
+                // CDN 載入失敗（離線等）：隱藏圖表區，不影響文字輸出
+                chartSection.classList.add('hidden');
+                return;
+            }
+            chartSection.classList.remove('hidden');
+
+            const labels = selectedTypes.map(tc => tc.toUpperCase());
+
+            // 銷毀既有實例，避免 canvas 重用報錯
+            Object.values(chartInstances).forEach(c => c && c.destroy());
+
+            const COLORS = {
+                cur: '#4f46e5', prev: '#cbd5e1',
+                win: '#10b981', loss: '#ef4444', draw: '#94a3b8',
+                white: '#f59e0b', black: '#334155'
+            };
+            const baseOpts = {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { labels: { boxWidth: 12, font: { size: 11 } } } }
+            };
+            const pctScale = { y: { beginAtZero: true, max: 100, ticks: { callback: v => v + '%' } } };
+
+            // 1) 勝率對比：當期 vs 前期
+            chartInstances.winRate = new Chart(document.getElementById('chartWinRate'), {
+                type: 'bar',
+                data: {
+                    labels,
+                    datasets: [
+                        { label: '當期勝率', data: selectedTypes.map(tc => current[tc].winRate), backgroundColor: COLORS.cur },
+                        { label: '前期勝率', data: selectedTypes.map(tc => prev[tc].winRate), backgroundColor: COLORS.prev }
+                    ]
+                },
+                options: { ...baseOpts, scales: pctScale }
+            });
+
+            // 2) 當期勝/負/和分布 (堆疊場次)
+            chartInstances.wld = new Chart(document.getElementById('chartWLD'), {
+                type: 'bar',
+                data: {
+                    labels,
+                    datasets: [
+                        { label: '勝', data: selectedTypes.map(tc => current[tc].win), backgroundColor: COLORS.win },
+                        { label: '負', data: selectedTypes.map(tc => current[tc].loss), backgroundColor: COLORS.loss },
+                        { label: '和', data: selectedTypes.map(tc => current[tc].draw), backgroundColor: COLORS.draw }
+                    ]
+                },
+                options: {
+                    ...baseOpts,
+                    scales: { x: { stacked: true }, y: { stacked: true, beginAtZero: true, ticks: { precision: 0 } } }
+                }
+            });
+
+            // 3) 執子勝率：白方 vs 黑方
+            chartInstances.color = new Chart(document.getElementById('chartColor'), {
+                type: 'bar',
+                data: {
+                    labels,
+                    datasets: [
+                        { label: '白方勝率', data: selectedTypes.map(tc => current[tc].white.winRate), backgroundColor: COLORS.white },
+                        { label: '黑方勝率', data: selectedTypes.map(tc => current[tc].black.winRate), backgroundColor: COLORS.black }
+                    ]
+                },
+                options: { ...baseOpts, scales: pctScale }
+            });
         }
 
         function setLoading(isLoading) {
