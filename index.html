@@ -430,7 +430,10 @@
                     total: 0, win: 0, loss: 0, draw: 0, endRating: null,
                     win_timeout: 0, loss_timeout: 0,
                     win_mate: 0, loss_mate: 0,
-                    win_resign: 0, loss_resign: 0
+                    win_resign: 0, loss_resign: 0,
+                    // 依執子顏色分項統計
+                    white: { total: 0, win: 0, loss: 0, draw: 0 },
+                    black: { total: 0, win: 0, loss: 0, draw: 0 }
                 };
             });
 
@@ -445,16 +448,22 @@
                 stats[timeClass].total++;
                 stats[timeClass].endRating = myInfo.rating;
 
+                const colorStats = isWhite ? stats[timeClass].white : stats[timeClass].black;
+                colorStats.total++;
+
                 const result = getGameResult(game);
                 if (result === 'win') {
                     stats[timeClass].win++;
+                    colorStats.win++;
                     if (oppInfo.result === 'timeout') stats[timeClass].win_timeout++;
                     else if (oppInfo.result === 'checkmated') stats[timeClass].win_mate++;
                     else if (oppInfo.result === 'resigned' || oppInfo.result === 'abandoned') stats[timeClass].win_resign++;
                 } else if (result === 'draw') {
                     stats[timeClass].draw++;
+                    colorStats.draw++;
                 } else {
                     stats[timeClass].loss++;
+                    colorStats.loss++;
                     if (myInfo.result === 'timeout') stats[timeClass].loss_timeout++;
                     else if (myInfo.result === 'checkmated') stats[timeClass].loss_mate++;
                     else if (myInfo.result === 'resigned' || myInfo.result === 'abandoned') stats[timeClass].loss_resign++;
@@ -465,6 +474,14 @@
                 stats[tc].winRate = stats[tc].total > 0
                     ? parseFloat(((stats[tc].win / stats[tc].total) * 100).toFixed(2))
                     : 0;
+
+                // 各色勝率 (以該色總場次為分母)
+                ['white', 'black'].forEach(color => {
+                    const c = stats[tc][color];
+                    c.winRate = c.total > 0
+                        ? parseFloat(((c.win / c.total) * 100).toFixed(2))
+                        : 0;
+                });
             }
 
             return stats;
@@ -561,10 +578,26 @@
                     return d > 0 ? `+${d}` : `${d}`;
                 };
 
+                // 分色勝率變化 (帶 + 號)
+                const fmtRateDiff = (c, p) => {
+                    const d = (c - p).toFixed(2);
+                    return d > 0 ? `+${d}` : `${d}`;
+                };
+
+                // 單色一行: W:總 勝-負-和 (勝率%)
+                const colorLine = (label, cur, prv) => {
+                    return `   - ${label}: ${cur.total} 場 ${cur.win}-${cur.loss}-${cur.draw} (勝率 ${cur.winRate}%)` +
+                           ` (上期: ${prv.total} 場 ${prv.win}-${prv.loss}-${prv.draw} 勝率 ${prv.winRate}%` +
+                           ` | 勝率變化: ${fmtRateDiff(cur.winRate, prv.winRate)}%)\n`;
+                };
+
                 text += `[${tc.toUpperCase()} 賽制]\n`;
                 text += ` • 總場次 : ${curS.total} 場 (上期: ${prvS.total} 場 | 變化: ${diffTotal > 0 ? '+' : ''}${diffTotal})\n`;
                 text += ` • 勝率 : ${curS.winRate}% (上期: ${prvS.winRate}% | 變化: ${diffWinRate > 0 ? '+' : ''}${diffWinRate}%)\n`;
                 text += ` • 結算積分: ${curR} (上期: ${prvR} | 變化: ${diffR})\n`;
+                text += ` • 執子分項 (勝-負-和):\n`;
+                text += colorLine('白方', curS.white, prvS.white);
+                text += colorLine('黑方', curS.black, prvS.black);
                 text += ` • 超時勝負: 贏 ${curS.win_timeout} / 輸 ${curS.loss_timeout} (上期: 贏 ${prvS.win_timeout} / 輸 ${prvS.loss_timeout} | 變化: 贏 ${fmtDiff(curS.win_timeout, prvS.win_timeout)} 輸 ${fmtDiff(curS.loss_timeout, prvS.loss_timeout)})\n`;
                 text += ` • 將殺勝負: 贏 ${curS.win_mate} / 輸 ${curS.loss_mate} (上期: 贏 ${prvS.win_mate} / 輸 ${prvS.loss_mate} | 變化: 贏 ${fmtDiff(curS.win_mate, prvS.win_mate)} 輸 ${fmtDiff(curS.loss_mate, prvS.loss_mate)})\n`;
                 text += ` • 放棄勝負: 贏 ${curS.win_resign} / 輸 ${curS.loss_resign} (上期: 贏 ${prvS.win_resign} / 輸 ${prvS.loss_resign} | 變化: 贏 ${fmtDiff(curS.win_resign, prvS.win_resign)} 輸 ${fmtDiff(curS.loss_resign, prvS.loss_resign)})\n`;
