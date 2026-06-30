@@ -22,13 +22,31 @@
         <div class="bg-gradient-to-r from-indigo-600 to-violet-600 px-5 py-5 sm:px-6 sm:py-6 text-white">
             <h1 class="text-lg sm:text-2xl font-bold leading-snug">♟️ Chess.com 戰績深度統計與 AI 參考資料生成器</h1>
             <p class="text-indigo-100 text-xs sm:text-sm mt-2">
-                目標玩家：<span class="font-bold bg-white/20 px-2 py-0.5 rounded">ttdragon0722</span>
+                目標玩家：<span id="playerNameLabel" class="font-bold bg-white/20 px-2 py-0.5 rounded">ttdragon0722</span>
             </p>
         </div>
 
         <div class="p-4 sm:p-6">
             <!-- 控制區 -->
             <div class="p-4 bg-slate-50 rounded-xl border border-slate-200 mb-6 space-y-4">
+
+                <!-- 使用者 ID 路由輸入 -->
+                <div class="bg-white p-3 rounded-lg border border-slate-200">
+                    <label for="usernameInput" class="block text-sm font-medium text-slate-700 mb-1">Chess.com 使用者 ID</label>
+                    <div class="flex gap-2">
+                        <input type="text" id="usernameInput"
+                               class="flex-1 p-2.5 border border-slate-300 rounded-lg bg-white focus:ring-2 focus:ring-indigo-500 outline-none"
+                               placeholder="輸入 chess.com 帳號，例如 magnus" autocomplete="off" spellcheck="false" autocapitalize="none">
+                        <button id="goBtn"
+                                class="bg-violet-600 hover:bg-violet-700 active:bg-violet-800 text-white font-semibold px-4 rounded-lg transition min-h-[44px] cursor-pointer">
+                            套用
+                        </button>
+                    </div>
+                    <p class="text-xs text-slate-400 mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
+                        <span>也可直接在網址列輸入路由，例如 <code class="bg-slate-100 px-1 py-0.5 rounded">index.html#magnus</code> 或 <code class="bg-slate-100 px-1 py-0.5 rounded">?user=magnus</code>。</span>
+                        <button id="clearStorageBtn" type="button" class="text-slate-400 underline underline-offset-2 hover:text-rose-600 cursor-pointer">清除已儲存設定</button>
+                    </p>
+                </div>
 
                 <!-- 日期 + 抓取 -->
                 <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
@@ -125,7 +143,54 @@
     </div>
 
     <script>
-        const username = 'ttdragon0722';
+        // ===== localStorage 持久化 (無痕/容量滿時自動降級，不影響主流程) =====
+        const LS_KEY = 'chessPrompt:v1';
+
+        /** 讀取已儲存的設定物件，失敗回傳空物件 */
+        function loadSettings() {
+            try {
+                const raw = localStorage.getItem(LS_KEY);
+                return raw ? JSON.parse(raw) : {};
+            } catch (e) {
+                return {};
+            }
+        }
+
+        /** 合併寫入設定 (patch 會覆蓋同名鍵)，寫入失敗時靜默略過 */
+        function saveSettings(patch) {
+            try {
+                localStorage.setItem(LS_KEY, JSON.stringify({ ...loadSettings(), ...patch }));
+            } catch (e) {
+                /* 私密瀏覽或 quota 已滿，忽略 */
+            }
+        }
+
+        /** 清除所有已儲存設定 */
+        function clearSettings() {
+            try { localStorage.removeItem(LS_KEY); } catch (e) {}
+        }
+
+        // ===== 目標玩家 ID：由路由 (#hash) / 查詢字串 (?user) / 記憶值 / 預設 解析 =====
+        const DEFAULT_USER = 'ttdragon0722';
+
+        /** 從目前 URL 解析出使用者 ID，依優先序回退 */
+        function resolveUsername() {
+            // 1) Hash route：支援 #magnus 與 #/user/magnus 兩種寫法
+            const hash = decodeURIComponent(location.hash.replace(/^#\/?(?:user\/)?/, '')).trim();
+            if (hash) return hash;
+            // 2) Query string：?user=magnus
+            const q = new URLSearchParams(location.search).get('user');
+            if (q && q.trim()) return q.trim();
+            // 3) localStorage 記憶值
+            const saved = (loadSettings().username || '').trim();
+            if (saved) return saved;
+            // 4) 預設
+            return DEFAULT_USER;
+        }
+
+        // 全域可變：下游所有比對函式 (getGameResult / analyzeGames / generateReport) 直接引用此變數
+        let username = resolveUsername();
+
         const DRAW_RESULTS = ['agreed', 'stalemate', 'repetition', 'insufficient', 'timevsinsufficient', '50move'];
 
         // 預設日期: 這個月
@@ -134,9 +199,45 @@
         document.getElementById('startDate').value = firstDay.toISOString().split('T')[0];
         document.getElementById('endDate').value = today.toISOString().split('T')[0];
 
+        const usernameInput = document.getElementById('usernameInput');
+        const playerNameLabel = document.getElementById('playerNameLabel');
+
         document.getElementById('fetchBtn').addEventListener('click', fetchData);
         document.getElementById('copyBtn').addEventListener('click', copyText);
         document.getElementById('downloadBtn').addEventListener('click', downloadText);
+
+        // ===== 路由 / ID 同步 =====
+
+        /** 套用新的使用者 ID，同步輸入框、標題、header、hash 路由 */
+        function applyUsername(name, { pushHash = true } = {}) {
+            const clean = (name || '').trim();
+            if (!clean) {
+                showStatus('請輸入 Chess.com 使用者 ID', 'error');
+                return;
+            }
+            username = clean;
+            usernameInput.value = clean;
+            if (playerNameLabel) playerNameLabel.textContent = clean;
+            document.title = `${clean} | Chess.com 戰績分析`;
+            saveSettings({ username: clean }); // 記憶最後使用的帳號
+
+            const current = decodeURIComponent(location.hash.replace(/^#\/?(?:user\/)?/, '')).trim();
+            if (pushHash && current !== clean) {
+                location.hash = encodeURIComponent(clean); // 更新路由（值相同不會重入）
+            }
+        }
+
+        // 初始化：依目前 URL 帶入，不重複寫 hash
+        applyUsername(resolveUsername(), { pushHash: false });
+
+        // 套用按鈕 / Enter
+        document.getElementById('goBtn').addEventListener('click', () => applyUsername(usernameInput.value));
+        usernameInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') applyUsername(usernameInput.value);
+        });
+
+        // 監聽路由變化（瀏覽器上一頁/下一頁、手動改網址列 hash）
+        window.addEventListener('hashchange', () => applyUsername(resolveUsername(), { pushHash: false }));
 
         // 切換策略時更新提示文字
         document.getElementById('pgnStrategy').addEventListener('change', (e) => {
@@ -146,7 +247,63 @@
                 : '依勝/負/和比例分層，並在時間軸上均勻取樣。';
         });
 
+        // ===== 篩選設定的還原與持久化 =====
+
+        /** 從 localStorage 還原賽制勾選、PGN 數量與策略 */
+        function restoreFilters() {
+            const s = loadSettings();
+
+            if (Array.isArray(s.gameTypes)) {
+                document.querySelectorAll('.game-type-cb').forEach(cb => {
+                    cb.checked = s.gameTypes.includes(cb.value);
+                });
+            }
+
+            const limitEl = document.getElementById('pgnLimit');
+            if (s.pgnLimit != null && [...limitEl.options].some(o => o.value === String(s.pgnLimit))) {
+                limitEl.value = String(s.pgnLimit);
+            }
+
+            const strategyEl = document.getElementById('pgnStrategy');
+            if (s.pgnStrategy && [...strategyEl.options].some(o => o.value === s.pgnStrategy)) {
+                strategyEl.value = s.pgnStrategy;
+                strategyEl.dispatchEvent(new Event('change')); // 連動更新提示文字
+            }
+        }
+
+        /** 將目前篩選設定寫入 localStorage */
+        function persistFilters() {
+            saveSettings({
+                gameTypes: Array.from(document.querySelectorAll('.game-type-cb:checked')).map(cb => cb.value),
+                pgnLimit: document.getElementById('pgnLimit').value,
+                pgnStrategy: document.getElementById('pgnStrategy').value
+            });
+        }
+
+        // 任一篩選變更即持久化
+        document.querySelectorAll('.game-type-cb').forEach(cb => cb.addEventListener('change', persistFilters));
+        document.getElementById('pgnLimit').addEventListener('change', persistFilters);
+        document.getElementById('pgnStrategy').addEventListener('change', persistFilters);
+
+        // 啟動時還原 (須在上述監聽綁定後執行)
+        restoreFilters();
+
+        // 清除已儲存設定：清空記憶並回復預設帳號
+        document.getElementById('clearStorageBtn').addEventListener('click', () => {
+            clearSettings();
+            applyUsername(DEFAULT_USER, { pushHash: false });
+            showStatus('已清除本機儲存的帳號與篩選設定。', 'success');
+        });
+
         async function fetchData() {
+            // 防呆：抓取前以輸入框內容為準，確保與全域 username 一致
+            const typed = (usernameInput.value || '').trim();
+            if (typed && typed !== username) applyUsername(typed);
+            if (!username) {
+                showStatus('請先輸入 Chess.com 使用者 ID', 'error');
+                return;
+            }
+
             const startVal = document.getElementById('startDate').value;
             const endVal = document.getElementById('endDate').value;
 
@@ -175,16 +332,22 @@
             const prevEndDate = new Date(startDate.getTime() - 1000);
 
             setLoading(true);
-            showStatus('正在向 Chess.com 請求並計算進階比對數據中，請稍候...', 'info');
+            showStatus(`正在向 Chess.com 請求 ${username} 的對局並計算進階比對數據中，請稍候...`, 'info');
 
             try {
                 const monthsToFetch = getMonthsInRange(prevStartDate, endDate);
 
                 let allGames = [];
+                let archiveErrors = 0;
                 for (const item of monthsToFetch) {
                     const url = `https://api.chess.com/pub/player/${username}/games/${item.year}/${item.month}`;
                     try {
                         const response = await fetch(url);
+                        if (response.status === 404) {
+                            // 該月無資料或帳號不存在；繼續嘗試其他月份
+                            archiveErrors++;
+                            continue;
+                        }
                         if (response.ok) {
                             const data = await response.json();
                             if (data.games && Array.isArray(data.games)) {
@@ -194,6 +357,11 @@
                     } catch (e) {
                         console.warn(`Failed to fetch ${item.year}/${item.month}`, e);
                     }
+                }
+
+                if (allGames.length === 0) {
+                    showStatus(`查無 ${username} 在此區間的任何對局。請確認帳號 ID 是否正確、或調整日期範圍。`, 'error');
+                    return;
                 }
 
                 const currentGames = filterGamesByTime(allGames, startDate, endDate);
@@ -394,13 +562,13 @@
                 };
 
                 text += `[${tc.toUpperCase()} 賽制]\n`;
-                text += `  • 總場次  : ${curS.total} 場 (上期: ${prvS.total} 場 | 變化: ${diffTotal > 0 ? '+' : ''}${diffTotal})\n`;
-                text += `  • 勝率    : ${curS.winRate}% (上期: ${prvS.winRate}% | 變化: ${diffWinRate > 0 ? '+' : ''}${diffWinRate}%)\n`;
-                text += `  • 結算積分: ${curR} (上期: ${prvR} | 變化: ${diffR})\n`;
-                text += `  • 超時勝負: 贏 ${curS.win_timeout} / 輸 ${curS.loss_timeout} (上期: 贏 ${prvS.win_timeout} / 輸 ${prvS.loss_timeout} | 變化: 贏 ${fmtDiff(curS.win_timeout, prvS.win_timeout)} 輸 ${fmtDiff(curS.loss_timeout, prvS.loss_timeout)})\n`;
-                text += `  • 將殺勝負: 贏 ${curS.win_mate} / 輸 ${curS.loss_mate} (上期: 贏 ${prvS.win_mate} / 輸 ${prvS.loss_mate} | 變化: 贏 ${fmtDiff(curS.win_mate, prvS.win_mate)} 輸 ${fmtDiff(curS.loss_mate, prvS.loss_mate)})\n`;
-                text += `  • 放棄勝負: 贏 ${curS.win_resign} / 輸 ${curS.loss_resign} (上期: 贏 ${prvS.win_resign} / 輸 ${prvS.loss_resign} | 變化: 贏 ${fmtDiff(curS.win_resign, prvS.win_resign)} 輸 ${fmtDiff(curS.loss_resign, prvS.loss_resign)})\n`;
-                text += `  • 和棋場次: ${curS.draw} 場 (上期: ${prvS.draw} 場 | 變化: ${fmtDiff(curS.draw, prvS.draw)})\n\n`;
+                text += ` • 總場次 : ${curS.total} 場 (上期: ${prvS.total} 場 | 變化: ${diffTotal > 0 ? '+' : ''}${diffTotal})\n`;
+                text += ` • 勝率 : ${curS.winRate}% (上期: ${prvS.winRate}% | 變化: ${diffWinRate > 0 ? '+' : ''}${diffWinRate}%)\n`;
+                text += ` • 結算積分: ${curR} (上期: ${prvR} | 變化: ${diffR})\n`;
+                text += ` • 超時勝負: 贏 ${curS.win_timeout} / 輸 ${curS.loss_timeout} (上期: 贏 ${prvS.win_timeout} / 輸 ${prvS.loss_timeout} | 變化: 贏 ${fmtDiff(curS.win_timeout, prvS.win_timeout)} 輸 ${fmtDiff(curS.loss_timeout, prvS.loss_timeout)})\n`;
+                text += ` • 將殺勝負: 贏 ${curS.win_mate} / 輸 ${curS.loss_mate} (上期: 贏 ${prvS.win_mate} / 輸 ${prvS.loss_mate} | 變化: 贏 ${fmtDiff(curS.win_mate, prvS.win_mate)} 輸 ${fmtDiff(curS.loss_mate, prvS.loss_mate)})\n`;
+                text += ` • 放棄勝負: 贏 ${curS.win_resign} / 輸 ${curS.loss_resign} (上期: 贏 ${prvS.win_resign} / 輸 ${prvS.loss_resign} | 變化: 贏 ${fmtDiff(curS.win_resign, prvS.win_resign)} 輸 ${fmtDiff(curS.loss_resign, prvS.loss_resign)})\n`;
+                text += ` • 和棋場次: ${curS.draw} 場 (上期: ${prvS.draw} 場 | 變化: ${fmtDiff(curS.draw, prvS.draw)})\n\n`;
             });
 
             text += `</context>\n\n`;
@@ -456,7 +624,6 @@
             el.className = 'text-sm font-medium p-3 rounded-lg mb-6 border';
             el.innerText = msg;
             el.classList.remove('hidden');
-
             if (type === 'info') el.classList.add('bg-blue-50', 'text-blue-700', 'border-blue-200');
             else if (type === 'error') el.classList.add('bg-red-50', 'text-red-700', 'border-red-200');
             else if (type === 'success') el.classList.add('bg-emerald-50', 'text-emerald-700', 'border-emerald-200');
