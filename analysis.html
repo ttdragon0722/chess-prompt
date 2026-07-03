@@ -1,0 +1,628 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#4f46e5">
+    <title>Chess.com 棋局深度分析</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.3/chart.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/1.0.0/chess.min.js"></script>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; -webkit-text-size-adjust: 100%; }
+        @media (max-width: 640px) { input, select, textarea { font-size: 16px; } }
+    </style>
+</head>
+<body class="bg-slate-100 text-slate-800 min-h-screen py-4 px-3 sm:py-8 sm:px-4">
+    <div class="max-w-6xl mx-auto bg-white rounded-2xl shadow-lg sm:shadow-xl overflow-hidden ring-1 ring-slate-200">
+
+        <!-- Header -->
+        <div class="bg-gradient-to-r from-indigo-600 to-violet-600 px-5 py-5 sm:px-6 sm:py-6 text-white">
+            <h1 class="text-lg sm:text-2xl font-bold leading-snug">♟️ Chess.com 棋局深度分析</h1>
+            <p class="text-indigo-100 text-xs sm:text-sm mt-2">
+                玩家：<span id="playerNameLabel" class="font-bold bg-white/20 px-2 py-0.5 rounded">—</span>
+                <span id="cacheBadge" class="ml-2 hidden text-[11px] bg-white/15 px-2 py-0.5 rounded"></span>
+            </p>
+        </div>
+
+        <div class="p-4 sm:p-6">
+            <!-- 控制區 -->
+            <div class="p-4 bg-slate-50 rounded-xl border border-slate-200 mb-6 space-y-4">
+                <!-- 帳號 -->
+                <div class="bg-white p-3 rounded-lg border border-slate-200">
+                    <label for="usernameInput" class="block text-sm font-medium text-slate-700 mb-1">Chess.com 使用者 ID</label>
+                    <div class="flex gap-2">
+                        <input type="text" id="usernameInput"
+                               class="flex-1 p-2.5 border border-slate-300 rounded-lg bg-white focus:ring-2 focus:ring-indigo-500 outline-none"
+                               placeholder="輸入 chess.com 帳號" autocomplete="off" spellcheck="false" autocapitalize="none">
+                        <button id="loadBtn"
+                                class="bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white font-semibold px-4 rounded-lg transition min-h-[44px] cursor-pointer flex items-center">
+                            <span id="loadBtnText">載入 / 更新</span>
+                            <svg id="loadingIcon" class="animate-spin ml-2 h-5 w-5 hidden" viewBox="0 0 24 24" fill="none">
+                                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+                            </svg>
+                        </button>
+                    </div>
+                    <p class="text-xs text-slate-400 mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
+                        <span>支援路由 <code class="bg-slate-100 px-1 py-0.5 rounded">analysis.html#magnus</code>。過去月份永久快取，僅當月每次重抓。</span>
+                        <button id="clearCacheBtn" type="button" class="text-slate-400 underline underline-offset-2 hover:text-rose-600 cursor-pointer">清除此帳號快取</button>
+                    </p>
+                </div>
+
+                <!-- 篩選 -->
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div class="bg-white p-3 rounded-lg border border-slate-200">
+                        <label class="block text-sm font-medium text-slate-700 mb-2">時間範圍</label>
+                        <div id="windowGroup" class="flex flex-wrap gap-2"></div>
+                    </div>
+                    <div class="bg-white p-3 rounded-lg border border-slate-200">
+                        <label class="block text-sm font-medium text-slate-700 mb-2">賽制</label>
+                        <div id="typeGroup" class="flex flex-wrap gap-2"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="statusMessage" class="hidden text-sm font-medium p-3 rounded-lg mb-6 border"></div>
+
+            <!-- 分析結果 -->
+            <div id="resultSection" class="hidden space-y-6"></div>
+        </div>
+    </div>
+
+    <script>
+    // ================= 設定 =================
+    const DEFAULT_USER = '';
+    const CACHE_VERSION = 1;
+    const CACHE_PREFIX = 'chessAnalysis:v' + CACHE_VERSION + ':';
+    const DRAW_RESULTS = ['agreed', 'stalemate', 'repetition', 'insufficient', 'timevsinsufficient', '50move'];
+    const ENDGAME_PIECE_MAX = 6;
+
+    const WINDOWS = [['7d', '7 天'], ['30d', '30 天'], ['90d', '90 天'], ['1y', '1 年'], ['all', '全部']];
+    const TYPES = [['all', '全部'], ['bullet', 'Bullet'], ['blitz', 'Blitz'], ['rapid', 'Rapid']];
+
+    // 目前狀態
+    const state = {
+        username: '',
+        records: [],                 // 攤平後的精簡紀錄
+        analysisCache: new Map(),    // key `${window}:${type}` → 分析結果
+        window: '30d',               // 預設 30d
+        type: 'all',
+        charts: {}
+    };
+
+    // ================= 路由 / 使用者 =================
+    function resolveUsername() {
+        const hash = decodeURIComponent(location.hash.replace(/^#\/?(?:user\/)?/, '')).trim();
+        if (hash) return hash;
+        const q = new URLSearchParams(location.search).get('user');
+        if (q && q.trim()) return q.trim();
+        return DEFAULT_USER;
+    }
+
+    // ================= Storage 層 =================
+    function cacheKey(user) { return CACHE_PREFIX + user.toLowerCase(); }
+
+    function loadCache(user) {
+        try {
+            const raw = localStorage.getItem(cacheKey(user));
+            return raw ? JSON.parse(raw) : null;
+        } catch (e) { return null; }
+    }
+    function saveCache(user, data) {
+        try { localStorage.setItem(cacheKey(user), JSON.stringify(data)); return true; }
+        catch (e) { console.warn('快取寫入失敗（可能超出容量）', e); return false; }
+    }
+    function clearCache(user) { try { localStorage.removeItem(cacheKey(user)); } catch (e) {} }
+
+    // ================= 非阻塞工具 =================
+    // 讓出主執行緒一拍，避免長時間同步佔用觸發預覽 100ms 警戒
+    const yieldToEventLoop = () => new Promise(res => setTimeout(res, 0));
+
+    // 併發上限工作池：每個 runner 在 await 處自然讓出主執行緒
+    async function runPool(items, limit, worker) {
+        let cursor = 0;
+        const size = Math.min(limit, items.length);
+        const runners = Array.from({ length: size }, async () => {
+            while (cursor < items.length) {
+                const idx = cursor++;
+                await worker(items[idx], idx);
+            }
+        });
+        await Promise.all(runners);
+    }
+
+    // 分批解析單月對局，批間讓出主執行緒（單次同步 burst 受 chunk 控制）
+    async function parseGamesYielding(games, user, chunk = 150) {
+        const out = [];
+        for (let i = 0; i < games.length; i += chunk) {
+            const end = Math.min(i + chunk, games.length);
+            for (let j = i; j < end; j++) out.push(toRecord(games[j], user));
+            if (end < games.length) await yieldToEventLoop();
+        }
+        return out;
+    }
+
+    // ================= Data 層 =================
+    // 月封存快取：過去月份不可變→永久保留；當月→每次重抓。回傳攤平 records。
+    async function loadOrUpdate(user) {
+        const archivesUrl = `https://api.chess.com/pub/player/${user}/games/archives`;
+        const res = await fetch(archivesUrl);
+        if (res.status === 404) throw new Error('查無此帳號');
+        if (!res.ok) throw new Error('無法取得封存清單');
+        const { archives } = await res.json();
+        if (!archives || archives.length === 0) throw new Error('此帳號沒有任何對局');
+
+        const cache = loadCache(user) || { version: CACHE_VERSION, archives: {}, updatedAt: null };
+        if (cache.version !== CACHE_VERSION) { cache.archives = {}; cache.version = CACHE_VERSION; }
+
+        const currentMonthUrl = archives[archives.length - 1];
+
+        // 決定要抓的月份：當月一律重抓；過去月份僅在未快取時抓
+        const toFetch = archives.filter(url => url === currentMonthUrl || !cache.archives[url]);
+        const fromCache = archives.length - toFetch.length;
+        let fetched = 0;
+
+        // 併發抓取（上限 6），每月解析分批讓出主執行緒
+        await runPool(toFetch, 6, async (url) => {
+            try {
+                const r = await fetch(url);
+                if (!r.ok) return;
+                const data = await r.json();
+                cache.archives[url] = await parseGamesYielding(data.games || [], user);
+                fetched++;
+            } catch (e) { console.warn('抓取失敗', url, e); }
+        });
+
+        cache.updatedAt = new Date().toISOString();
+        saveCache(user, cache);
+
+        // 攤平 + 依時間排序
+        const records = Object.values(cache.archives).flat().sort((a, b) => a.end_time - b.end_time);
+        return { records, fetched, fromCache, updatedAt: cache.updatedAt };
+    }
+
+    // 反正規化（同核心測試版本）
+    function toRecord(game, username) {
+        const isWhite = game.white.username.toLowerCase() === username.toLowerCase();
+        const me = isWhite ? game.white : game.black;
+        const opp = isWhite ? game.black : game.white;
+        let result;
+        if (me.result === 'win') result = 'win';
+        else if (DRAW_RESULTS.includes(me.result) || DRAW_RESULTS.includes(opp.result)) result = 'draw';
+        else result = 'loss';
+        const eco = /\[ECO "([^"]+)"\]/.exec(game.pgn || '');
+        const ecoUrl = /\[ECOUrl "([^"]+)"\]/.exec(game.pgn || '');
+        return {
+            end_time: game.end_time, time_class: game.time_class,
+            color: isWhite ? 'white' : 'black', result,
+            myResult: me.result, oppResult: opp.result,
+            myRating: me.rating, oppRating: opp.rating,
+            eco: eco ? eco[1] : null,
+            opening: ecoUrl ? openingNameFromUrl(ecoUrl[1]) : null,
+            san: extractSan(game.pgn || '')
+        };
+    }
+    function openingNameFromUrl(url) {
+        const seg = url.split('/').pop() || '';
+        return decodeURIComponent(seg).replace(/-/g, ' ').trim();
+    }
+    function extractSan(pgn) {
+        let mt = pgn.replace(/^\s*\[[^\]]*\]\s*$/gm, ' ');
+        mt = mt.replace(/\{[^}]*\}/g, ' ').replace(/\([^)]*\)/g, ' ')
+               .replace(/\$\d+/g, ' ').replace(/\d+\.(\.\.)?/g, ' ')
+               .replace(/(1-0|0-1|1\/2-1\/2|\*)\s*$/, ' ');
+        return mt.split(/\s+/).filter(Boolean);
+    }
+
+    // ================= Analysis 層（純函式，依 filter memoize）=================
+    function withinWindow(rec, windowKey, nowSec) {
+        if (windowKey === 'all') return true;
+        const days = { '7d': 7, '30d': 30, '90d': 90, '1y': 365 }[windowKey];
+        return rec.end_time >= nowSec - days * 86400;
+    }
+    function filterRecords(records, windowKey, typeKey, nowSec) {
+        return records.filter(r =>
+            (typeKey === 'all' || r.time_class === typeKey) && withinWindow(r, windowKey, nowSec));
+    }
+
+    function analyzeOverview(recs) {
+        const o = { total: recs.length, win: 0, loss: 0, draw: 0, ratingMin: null, ratingMax: null, oppSum: 0, oppN: 0, byColor: { white: { total: 0, win: 0 }, black: { total: 0, win: 0 } } };
+        recs.forEach(r => {
+            o[r.result]++;
+            o.byColor[r.color].total++; if (r.result === 'win') o.byColor[r.color].win++;
+            if (typeof r.myRating === 'number') {
+                o.ratingMin = o.ratingMin === null ? r.myRating : Math.min(o.ratingMin, r.myRating);
+                o.ratingMax = o.ratingMax === null ? r.myRating : Math.max(o.ratingMax, r.myRating);
+            }
+            if (typeof r.oppRating === 'number') { o.oppSum += r.oppRating; o.oppN++; }
+        });
+        o.winRate = o.total ? +((o.win / o.total) * 100).toFixed(2) : 0;
+        o.avgOpp = o.oppN ? Math.round(o.oppSum / o.oppN) : null;
+        ['white', 'black'].forEach(c => o.byColor[c].winRate = o.byColor[c].total ? +((o.byColor[c].win / o.byColor[c].total) * 100).toFixed(1) : 0);
+        return o;
+    }
+
+    function analyzeOpenings(recs) {
+        const acc = { white: {}, black: {} };
+        recs.forEach(r => {
+            const name = r.opening || '未知開局';
+            const b = acc[r.color];
+            b[name] = b[name] || { name, total: 0, win: 0, loss: 0, draw: 0 };
+            b[name].total++; b[name][r.result]++;
+        });
+        const fin = obj => Object.values(obj)
+            .map(o => ({ ...o, winRate: o.total ? +((o.win / o.total) * 100).toFixed(1) : 0 }))
+            .sort((a, b) => b.total - a.total);
+        return { white: fin(acc.white), black: fin(acc.black) };
+    }
+
+    function analyzeTactics(recs) {
+        const t = { mateDelivered: 0, mateReceived: 0, checksBy: 0, checksAgainst: 0, matesBySan: 0, matesAgainstSan: 0, totalPlies: 0, resignsWon: 0, resignsLost: 0, timeoutWon: 0, timeoutLost: 0 };
+        recs.forEach(r => {
+            if (r.myResult === 'win' && r.oppResult === 'checkmated') t.mateDelivered++;
+            if (r.myResult === 'checkmated') t.mateReceived++;
+            if (r.result === 'win' && (r.oppResult === 'resigned' || r.oppResult === 'abandoned')) t.resignsWon++;
+            if (r.myResult === 'resigned' || r.myResult === 'abandoned') t.resignsLost++;
+            if (r.result === 'win' && r.oppResult === 'timeout') t.timeoutWon++;
+            if (r.myResult === 'timeout') t.timeoutLost++;
+            const iAmWhite = r.color === 'white';
+            (r.san || []).forEach((mv, i) => {
+                const mine = (i % 2 === 0) === iAmWhite;
+                t.totalPlies++;
+                if (mv.includes('#')) { mine ? t.matesBySan++ : t.matesAgainstSan++; }
+                else if (mv.includes('+')) { mine ? t.checksBy++ : t.checksAgainst++; }
+            });
+        });
+        t.checkRateBy = t.totalPlies ? +((t.checksBy / t.totalPlies) * 100).toFixed(2) : 0;
+        t.checkRateAgainst = t.totalPlies ? +((t.checksAgainst / t.totalPlies) * 100).toFixed(2) : 0;
+        return t;
+    }
+
+    function classifyEndgame(board) {
+        const c = { p: 0, n: 0, b: 0, r: 0, q: 0 }; let nonKing = 0;
+        for (const row of board) for (const sq of row) {
+            if (!sq || sq.type === 'k') continue; c[sq.type]++; nonKing++;
+        }
+        if (nonKing > ENDGAME_PIECE_MAX) return null;
+        if (c.q > 0) return 'queen';
+        if (c.n === 0 && c.b === 0 && c.r === 0) return 'kingPawn';
+        if (c.n === 0 && c.b === 0 && c.r > 0) return 'rookPawn';
+        return 'minor';
+    }
+    async function analyzeEndgames(recs) {
+        const types = ['kingPawn', 'rookPawn', 'queen', 'minor'];
+        const stat = {}; types.forEach(t => stat[t] = { total: 0, win: 0, loss: 0, draw: 0 });
+        let reached = 0, errors = 0;
+        const hasChess = typeof Chess !== 'undefined';
+        if (hasChess) {
+            const CHUNK = 40; // 每批重播 40 局後讓出主執行緒
+            for (let i = 0; i < recs.length; i += CHUNK) {
+                const end = Math.min(i + CHUNK, recs.length);
+                for (let k = i; k < end; k++) {
+                    const r = recs[k];
+                    if (!r.san || r.san.length === 0) continue;
+                    try {
+                        const c = new Chess();
+                        for (const mv of r.san) { if (!c.move(mv, { sloppy: true })) throw 0; }
+                        const type = classifyEndgame(c.board());
+                        if (!type) continue;
+                        reached++; stat[type].total++; stat[type][r.result]++;
+                    } catch (e) { errors++; }
+                }
+                if (end < recs.length) await yieldToEventLoop();
+            }
+        }
+        types.forEach(t => stat[t].winRate = stat[t].total ? +((stat[t].win / stat[t].total) * 100).toFixed(1) : 0);
+        return { stat, reached, errors, available: hasChess };
+    }
+
+    // 依 filter 計算（memoized）
+    async function getAnalysis() {
+        const key = `${state.window}:${state.type}`;
+        if (state.analysisCache.has(key)) return state.analysisCache.get(key);
+        const nowSec = Math.floor(Date.now() / 1000);
+        const recs = filterRecords(state.records, state.window, state.type, nowSec);
+        const endgames = await analyzeEndgames(recs); // 非阻塞
+        const result = {
+            filteredCount: recs.length,
+            overview: analyzeOverview(recs),
+            openings: analyzeOpenings(recs),
+            tactics: analyzeTactics(recs),
+            endgames
+        };
+        state.analysisCache.set(key, result);
+        return result;
+    }
+
+    // ================= UI 層 =================
+    function esc(s) { return String(s).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])); }
+
+    function buildFilterButtons() {
+        const wg = document.getElementById('windowGroup');
+        const tg = document.getElementById('typeGroup');
+        wg.innerHTML = ''; tg.innerHTML = '';
+        WINDOWS.forEach(([val, label]) => wg.appendChild(makePill(val, label, 'window')));
+        TYPES.forEach(([val, label]) => tg.appendChild(makePill(val, label, 'type')));
+        syncPills();
+    }
+    function makePill(val, label, group) {
+        const b = document.createElement('button');
+        b.type = 'button'; b.dataset.group = group; b.dataset.val = val; b.textContent = label;
+        b.className = 'filter-pill px-3 py-1.5 rounded-lg text-sm font-medium border transition cursor-pointer';
+        b.addEventListener('click', () => {
+            state[group] = val; syncPills();
+            if (state.records.length) renderAll().catch(e => console.error(e));
+        });
+        return b;
+    }
+    function syncPills() {
+        document.querySelectorAll('.filter-pill').forEach(b => {
+            const active = state[b.dataset.group] === b.dataset.val;
+            b.className = 'filter-pill px-3 py-1.5 rounded-lg text-sm font-medium border transition cursor-pointer ' +
+                (active ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-slate-600 border-slate-300 hover:border-indigo-400');
+        });
+    }
+
+    function card(title, bodyHtml, note) {
+        return `<div class="bg-white rounded-xl border border-slate-200 shadow-sm p-4 sm:p-5">
+            <h3 class="text-sm sm:text-base font-bold text-slate-900 mb-3">${title}</h3>
+            ${bodyHtml}
+            ${note ? `<p class="text-xs text-slate-400 mt-3">${note}</p>` : ''}
+        </div>`;
+    }
+    function engineStub(title, items) {
+        return `<div class="bg-slate-50 rounded-xl border border-dashed border-slate-300 p-4 sm:p-5">
+            <div class="flex items-center gap-2 mb-2">
+                <h3 class="text-sm sm:text-base font-bold text-slate-500">${title}</h3>
+                <span class="text-[11px] bg-amber-100 text-amber-700 px-2 py-0.5 rounded">需引擎分析</span>
+            </div>
+            <ul class="text-xs text-slate-500 list-disc pl-5 space-y-1">${items.map(i => `<li>${i}</li>`).join('')}</ul>
+            <p class="text-xs text-slate-400 mt-3">此類指標為 chess.com 付費 Game Review 的引擎產物，公開 API 不提供；需自帶 Stockfish WASM 逐盤分析方能重現（近似）。</p>
+        </div>`;
+    }
+
+    let renderToken = 0;
+    async function renderAll() {
+        const my = ++renderToken;
+        const sec = document.getElementById('resultSection');
+        sec.classList.remove('hidden');
+
+        const filterLabel = `${WINDOWS.find(w => w[0] === state.window)[1]} · ${TYPES.find(t => t[0] === state.type)[1]}`;
+
+        // 首次計算此 filter 時顯示提示（已快取則瞬間返回，不閃爍）
+        const cached = state.analysisCache.has(`${state.window}:${state.type}`);
+        if (!cached) sec.innerHTML = card('分析中…', `<p class="text-sm text-slate-500">正在計算「${filterLabel}」的統計（含殘局重播）…</p>`);
+
+        const a = await getAnalysis();
+        if (my !== renderToken) return; // 已被較新的篩選請求取代，放棄本次渲染
+
+        if (a.filteredCount === 0) {
+            sec.innerHTML = card('無資料', `<p class="text-sm text-slate-500">篩選條件「${filterLabel}」下沒有對局。試試更長的時間範圍或其他賽制。</p>`);
+            return;
+        }
+
+        const ov = a.overview;
+        const html = [];
+
+        // 篩選摘要
+        html.push(`<div class="flex items-center justify-between flex-wrap gap-2">
+            <div class="text-sm text-slate-500">目前檢視：<span class="font-semibold text-slate-800">${filterLabel}</span>（${a.filteredCount} 局）</div>
+        </div>`);
+
+        // 1. 綜述
+        html.push(card('1 · 綜述', `
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+                ${stat('總場次', ov.total)}
+                ${stat('勝率', ov.winRate + '%', 'text-indigo-600')}
+                ${stat('積分區間', ov.ratingMin != null ? `${ov.ratingMin}–${ov.ratingMax}` : '—')}
+                ${stat('平均對手', ov.avgOpp ?? '—')}
+            </div>
+            <div class="grid grid-cols-3 gap-3 text-center">
+                ${stat('勝', ov.win, 'text-emerald-600')}
+                ${stat('負', ov.loss, 'text-rose-600')}
+                ${stat('和', ov.draw, 'text-slate-500')}
+            </div>
+            <div class="grid grid-cols-2 gap-3 mt-3 text-center">
+                ${stat('白方勝率', ov.byColor.white.winRate + '%', 'text-amber-600', `${ov.byColor.white.total} 局`)}
+                ${stat('黑方勝率', ov.byColor.black.winRate + '%', 'text-slate-700', `${ov.byColor.black.total} 局`)}
+            </div>
+            <div class="relative h-48 mt-4"><canvas id="chartOverview"></canvas></div>
+        `));
+
+        // 2. 開局
+        html.push(card('2 · 開局（分色 · 勝率）', `
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                <div>${openingTable('執白開局', a.openings.white)}</div>
+                <div>${openingTable('執黑開局', a.openings.black)}</div>
+            </div>
+        `, '開局名稱取自 PGN 的 ECOUrl 標頭；勝率為該開局下的實際結果。'));
+
+        // 3. 戰術
+        const t = a.tactics;
+        html.push(card('3 · 戰術（將殺 · 將軍）', `
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                ${stat('給出將殺', t.mateDelivered, 'text-emerald-600')}
+                ${stat('被將殺', t.mateReceived, 'text-rose-600')}
+                ${stat('我方將軍次數', t.checksBy)}
+                ${stat('被將軍次數', t.checksAgainst)}
+            </div>
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-3">
+                ${stat('逼降對手', t.resignsWon, 'text-emerald-600')}
+                ${stat('我方認輸', t.resignsLost, 'text-rose-600')}
+                ${stat('超時贏', t.timeoutWon, 'text-emerald-600')}
+                ${stat('超時輸', t.timeoutLost, 'text-rose-600')}
+            </div>
+        `, '將殺以結果欄位為權威來源，將軍由 SAN 記號（+/#）依走子方統計。'));
+
+        // Fork/Pin/Discovery → 需引擎/動機分類器
+        html.push(engineStub('3b · 戰術動機偵測（Fork / Pin / Discovery）', [
+            'Fork（叉子）、Pin（牽制）、Skewer、Discovered attack 需逐步盤面幾何分析或動機分類器',
+            '純啟發式偵測誤判率高，為維持數據可信度暫不輸出估計值'
+        ]));
+
+        // 4. 策略 → 需引擎
+        html.push(engineStub('4 · 策略準確度', [
+            'Overall Strategic Accuracy', 'Attacking Accuracy', 'Defending Accuracy',
+            'Active Piece Accuracy', 'Pawn Structure Accuracy'
+        ]));
+
+        // 5a. 殘局（依子力類型）
+        const eg = a.endgames;
+        if (eg.available) {
+            html.push(card('5 · 殘局（依子力類型 · 勝率）', `
+                <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    ${egStat('王兵殘局', eg.stat.kingPawn)}
+                    ${egStat('車兵殘局', eg.stat.rookPawn)}
+                    ${egStat('后翼殘局', eg.stat.queen)}
+                    ${egStat('輕子/其他', eg.stat.minor)}
+                </div>
+                <div class="relative h-48 mt-4"><canvas id="chartEndgame"></canvas></div>
+            `, `共 ${eg.reached} 局進入殘局（終局非王棋子 ≤ ${ENDGAME_PIECE_MAX}）${eg.errors ? `，${eg.errors} 局棋步解析失敗已略過` : ''}。`));
+        } else {
+            html.push(engineStub('5 · 殘局（依子力類型）', ['chess.js 載入失敗，無法重播棋步分類殘局（可能離線）']));
+        }
+
+        // 5b/5c 進階殘局 → 需引擎
+        html.push(engineStub('5b · 進階殘局指標', [
+            'Endgame Win % from Better / Equal / Worse Position（需局面評估）',
+            'Endgame Accuracy（Overall / K+P / R+P / Queen）',
+            'Brilliant move 偵測'
+        ]));
+
+        document.getElementById('resultSection').innerHTML = html.join('');
+        renderCharts(a);
+    }
+
+    function stat(label, val, color, sub) {
+        return `<div class="bg-slate-50 rounded-lg p-3 text-center">
+            <div class="text-lg sm:text-xl font-bold ${color || 'text-slate-900'}">${val}</div>
+            <div class="text-xs text-slate-500 mt-0.5">${label}</div>
+            ${sub ? `<div class="text-[11px] text-slate-400">${sub}</div>` : ''}
+        </div>`;
+    }
+    function egStat(label, s) {
+        return `<div class="bg-slate-50 rounded-lg p-3 text-center">
+            <div class="text-lg font-bold ${s.total ? 'text-indigo-600' : 'text-slate-300'}">${s.total ? s.winRate + '%' : '—'}</div>
+            <div class="text-xs text-slate-500 mt-0.5">${label}</div>
+            <div class="text-[11px] text-slate-400">${s.total} 局 (${s.win}/${s.loss}/${s.draw})</div>
+        </div>`;
+    }
+    function openingTable(title, rows) {
+        if (!rows.length) return `<div class="text-xs text-slate-400">${title}：無資料</div>`;
+        const top = rows.slice(0, 6);
+        const body = top.map(o => `<tr class="border-t border-slate-100">
+            <td class="py-1.5 pr-2 text-slate-700">${esc(o.name)}</td>
+            <td class="py-1.5 px-1 text-right tabular-nums">${o.total}</td>
+            <td class="py-1.5 pl-2 text-right tabular-nums font-semibold ${o.winRate >= 50 ? 'text-emerald-600' : 'text-rose-600'}">${o.winRate}%</td>
+        </tr>`).join('');
+        return `<div class="text-xs font-semibold text-slate-500 mb-1">${title}</div>
+            <table class="w-full text-xs sm:text-sm">
+                <thead><tr class="text-slate-400 text-xs"><th class="text-left font-medium">開局</th><th class="text-right font-medium">局數</th><th class="text-right font-medium">勝率</th></tr></thead>
+                <tbody>${body}</tbody>
+            </table>`;
+    }
+
+    function renderCharts(a) {
+        Object.values(state.charts).forEach(c => c && c.destroy());
+        state.charts = {};
+        if (typeof Chart === 'undefined') return;
+
+        const ovEl = document.getElementById('chartOverview');
+        if (ovEl) {
+            state.charts.ov = new Chart(ovEl, {
+                type: 'doughnut',
+                data: {
+                    labels: ['勝', '負', '和'],
+                    datasets: [{ data: [a.overview.win, a.overview.loss, a.overview.draw], backgroundColor: ['#10b981', '#ef4444', '#94a3b8'] }]
+                },
+                options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'right' } } }
+            });
+        }
+        const egEl = document.getElementById('chartEndgame');
+        if (egEl && a.endgames.available) {
+            const s = a.endgames.stat;
+            state.charts.eg = new Chart(egEl, {
+                type: 'bar',
+                data: {
+                    labels: ['王兵', '車兵', '后翼', '輕子/其他'],
+                    datasets: [{ label: '殘局勝率', data: [s.kingPawn.winRate, s.rookPawn.winRate, s.queen.winRate, s.minor.winRate], backgroundColor: '#4f46e5' }]
+                },
+                options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, max: 100, ticks: { callback: v => v + '%' } } } }
+            });
+        }
+    }
+
+    // ================= 控制器 =================
+    function setLoading(on) {
+        const btn = document.getElementById('loadBtn');
+        document.getElementById('loadingIcon').classList.toggle('hidden', !on);
+        document.getElementById('loadBtnText').textContent = on ? '處理中…' : '載入 / 更新';
+        btn.disabled = on; btn.classList.toggle('opacity-70', on); btn.classList.toggle('cursor-not-allowed', on);
+    }
+    function showStatus(msg, type) {
+        const el = document.getElementById('statusMessage');
+        el.className = 'text-sm font-medium p-3 rounded-lg mb-6 border';
+        el.textContent = msg; el.classList.remove('hidden');
+        const m = { info: ['bg-blue-50', 'text-blue-700', 'border-blue-200'], error: ['bg-red-50', 'text-red-700', 'border-red-200'], success: ['bg-emerald-50', 'text-emerald-700', 'border-emerald-200'] }[type] || [];
+        el.classList.add(...m);
+    }
+    function setUsername(name, pushHash) {
+        const clean = (name || '').trim();
+        state.username = clean;
+        document.getElementById('usernameInput').value = clean;
+        document.getElementById('playerNameLabel').textContent = clean || '—';
+        document.title = clean ? `${clean} | 棋局深度分析` : 'Chess.com 棋局深度分析';
+        if (pushHash) {
+            const cur = decodeURIComponent(location.hash.replace(/^#\/?(?:user\/)?/, '')).trim();
+            if (cur !== clean) location.hash = encodeURIComponent(clean);
+        }
+    }
+
+    async function handleLoad() {
+        const user = (document.getElementById('usernameInput').value || '').trim();
+        if (!user) { showStatus('請輸入 Chess.com 使用者 ID', 'error'); return; }
+        setUsername(user, true);
+        state.analysisCache.clear(); // 換人/更新 → 清分析快取
+        setLoading(true);
+        showStatus(`正在載入 ${user} 的對局（過去月份走快取，僅更新當月）…`, 'info');
+        try {
+            const { records, fetched, fromCache, updatedAt } = await loadOrUpdate(user);
+            state.records = records;
+            const badge = document.getElementById('cacheBadge');
+            badge.classList.remove('hidden');
+            badge.textContent = `共 ${records.length} 局 · 快取月 ${fromCache} · 更新月 ${fetched}`;
+            showStatus(`載入完成：${records.length} 局（${fromCache} 個月來自快取、${fetched} 個月重新抓取）。`, 'success');
+            await renderAll();
+        } catch (e) {
+            console.error(e);
+            showStatus(`載入失敗：${e.message || e}`, 'error');
+        } finally {
+            setLoading(false);
+        }
+    }
+
+    // ================= 初始化 =================
+    buildFilterButtons();
+    document.getElementById('loadBtn').addEventListener('click', handleLoad);
+    document.getElementById('usernameInput').addEventListener('keydown', e => { if (e.key === 'Enter') handleLoad(); });
+    document.getElementById('clearCacheBtn').addEventListener('click', () => {
+        if (!state.username) { showStatus('尚未指定帳號', 'error'); return; }
+        clearCache(state.username); state.records = []; state.analysisCache.clear();
+        document.getElementById('resultSection').classList.add('hidden');
+        document.getElementById('cacheBadge').classList.add('hidden');
+        showStatus(`已清除 ${state.username} 的快取。`, 'success');
+    });
+    window.addEventListener('hashchange', () => {
+        const u = resolveUsername();
+        if (u && u !== state.username) { setUsername(u, false); handleLoad(); }
+    });
+
+    // 啟動：若路由帶了帳號，自動載入
+    (function init() {
+        const u = resolveUsername();
+        if (u) { setUsername(u, false); handleLoad(); }
+    })();
+    </script>
+</body>
+</html>
