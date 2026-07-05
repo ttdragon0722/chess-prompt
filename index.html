@@ -4,800 +4,1358 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="theme-color" content="#4f46e5">
-    <title>Chess.com 戰績對比與 AI 資料生成器 (進階版)</title>
+    <title>Chess.com 戰績分析與 AI 資料匯出</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.3/chart.umd.min.js"></script>
+    <script>
+        tailwind.config = {
+            theme: { extend: { fontFamily: { sans: ['-apple-system', 'BlinkMacSystemFont', '"Segoe UI"', 'Roboto', '"Helvetica Neue"', 'Arial', 'sans-serif'] } } }
+        };
+    </script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chess.js@0.12.1/chess.js"></script>
     <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; -webkit-text-size-adjust: 100%; }
-        /* 避免 iOS Safari 自動縮放，輸入字級至少 16px */
-        @media (max-width: 640px) {
-            input, select, textarea { font-size: 16px; }
-        }
+        body { -webkit-text-size-adjust: 100%; }
+        @media (max-width: 640px) { input, select, textarea { font-size: 16px; } }
         textarea { -webkit-overflow-scrolling: touch; }
+        .glass { background: rgba(255,255,255,0.82); backdrop-filter: saturate(180%) blur(12px); -webkit-backdrop-filter: saturate(180%) blur(12px); }
+        .card { transition: box-shadow .2s ease, transform .2s ease; }
+        .card:hover { box-shadow: 0 10px 30px -12px rgba(79,70,229,0.18); }
+        .pill { transition: all .18s ease; }
+        .seg-btn { transition: color .2s ease; }
+        textarea::-webkit-scrollbar { width: 10px; }
+        textarea::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 8px; }
+        textarea::-webkit-scrollbar-track { background: transparent; }
+        .fade-in { animation: fadeIn .3s ease; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
     </style>
 </head>
-<body class="bg-slate-100 text-slate-800 min-h-screen py-4 px-3 sm:py-8 sm:px-4">
-    <div class="max-w-5xl mx-auto bg-white rounded-2xl shadow-lg sm:shadow-xl overflow-hidden ring-1 ring-slate-200">
+<body class="bg-slate-100 text-slate-800 font-sans min-h-screen">
 
-        <!-- Header -->
-        <div class="bg-gradient-to-r from-indigo-600 to-violet-600 px-5 py-5 sm:px-6 sm:py-6 text-white">
-            <h1 class="text-lg sm:text-2xl font-bold leading-snug">♟️ Chess.com 戰績深度統計與 AI 參考資料生成器</h1>
-            <p class="text-indigo-100 text-xs sm:text-sm mt-2">
-                目標玩家：<span id="playerNameLabel" class="font-bold bg-white/20 px-2 py-0.5 rounded">ttdragon0722</span>
-            </p>
-        </div>
-
-        <div class="p-4 sm:p-6">
-            <!-- 控制區 -->
-            <div class="p-4 bg-slate-50 rounded-xl border border-slate-200 mb-6 space-y-4">
-
-                <!-- 使用者 ID 路由輸入 -->
-                <div class="bg-white p-3 rounded-lg border border-slate-200">
-                    <label for="usernameInput" class="block text-sm font-medium text-slate-700 mb-1">Chess.com 使用者 ID</label>
-                    <div class="flex gap-2">
-                        <input type="text" id="usernameInput"
-                               class="flex-1 p-2.5 border border-slate-300 rounded-lg bg-white focus:ring-2 focus:ring-indigo-500 outline-none"
-                               placeholder="輸入 chess.com 帳號，例如 magnus" autocomplete="off" spellcheck="false" autocapitalize="none">
-                        <button id="goBtn"
-                                class="bg-violet-600 hover:bg-violet-700 active:bg-violet-800 text-white font-semibold px-4 rounded-lg transition min-h-[44px] cursor-pointer">
-                            套用
-                        </button>
-                    </div>
-                    <p class="text-xs text-slate-400 mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
-                        <span>也可直接在網址列輸入路由，例如 <code class="bg-slate-100 px-1 py-0.5 rounded">index.html#magnus</code> 或 <code class="bg-slate-100 px-1 py-0.5 rounded">?user=magnus</code>。</span>
-                        <button id="clearStorageBtn" type="button" class="text-slate-400 underline underline-offset-2 hover:text-rose-600 cursor-pointer">清除已儲存設定</button>
+    <!-- ===== 頂欄（sticky）===== -->
+    <header class="glass sticky top-0 z-30 border-b border-slate-200/70">
+        <div class="max-w-6xl mx-auto px-4 sm:px-6 py-3 flex flex-col sm:flex-row sm:items-center gap-3">
+            <div class="flex items-center gap-2.5 shrink-0">
+                
+                <div class="leading-tight">
+                    <h1 class="text-sm sm:text-base font-bold text-slate-900">Chess.com 戰績分析</h1>
+                    <p class="text-[11px] text-slate-500">
+                        玩家：<span id="playerNameLabel" class="font-semibold text-indigo-600">—</span>
+                        <span id="cacheBadge" class="ml-1 hidden text-[10px] text-slate-400"></span>
                     </p>
                 </div>
-
-                <!-- 日期 + 抓取 -->
-                <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
-                    <div>
-                        <label class="block text-sm font-medium text-slate-700 mb-1">開始日期 (當期)</label>
-                        <input type="date" id="startDate" class="w-full p-2.5 border border-slate-300 rounded-lg bg-white focus:ring-2 focus:ring-indigo-500 outline-none">
-                    </div>
-                    <div>
-                        <label class="block text-sm font-medium text-slate-700 mb-1">結束日期 (當期)</label>
-                        <input type="date" id="endDate" class="w-full p-2.5 border border-slate-300 rounded-lg bg-white focus:ring-2 focus:ring-indigo-500 outline-none">
-                    </div>
-                    <div class="flex items-end">
-                        <button id="fetchBtn" class="w-full bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white font-semibold py-2.5 px-4 rounded-lg transition duration-200 shadow-sm cursor-pointer flex justify-center items-center min-h-[44px]">
-                            <span id="btnText">抓取並深度比對資料</span>
-                            <svg id="loadingIcon" class="animate-spin ml-2 h-5 w-5 text-white hidden" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                            </svg>
-                        </button>
-                    </div>
-                </div>
-
-                <!-- 賽制 -->
-                <div class="bg-white p-3 rounded-lg border border-slate-200">
-                    <label class="block text-sm font-medium text-slate-700 mb-2">選擇分析的賽制 (可複選)</label>
-                    <div class="grid grid-cols-2 sm:flex sm:flex-wrap gap-x-5 gap-y-2.5">
-                        <label class="inline-flex items-center cursor-pointer">
-                            <input type="checkbox" value="bullet" class="game-type-cb w-4 h-4 text-indigo-600 rounded focus:ring-indigo-500" checked>
-                            <span class="ml-2 text-sm text-slate-700">Bullet (超快)</span>
-                        </label>
-                        <label class="inline-flex items-center cursor-pointer">
-                            <input type="checkbox" value="blitz" class="game-type-cb w-4 h-4 text-indigo-600 rounded focus:ring-indigo-500" checked>
-                            <span class="ml-2 text-sm text-slate-700">Blitz (快棋)</span>
-                        </label>
-                        <label class="inline-flex items-center cursor-pointer">
-                            <input type="checkbox" value="rapid" class="game-type-cb w-4 h-4 text-indigo-600 rounded focus:ring-indigo-500" checked>
-                            <span class="ml-2 text-sm text-slate-700">Rapid (快速)</span>
-                        </label>
-                        <label class="inline-flex items-center cursor-pointer">
-                            <input type="checkbox" value="daily" class="game-type-cb w-4 h-4 text-indigo-600 rounded focus:ring-indigo-500">
-                            <span class="ml-2 text-sm text-slate-700">Daily (每日)</span>
-                        </label>
-                    </div>
-                </div>
-
-                <!-- PGN 數量與選取策略 -->
-                <div class="bg-white p-3 rounded-lg border border-slate-200 grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
-                    <div>
-                        <label for="pgnLimit" class="block text-sm font-medium text-slate-700 mb-1">輸出 PGN 棋譜數量</label>
-                        <select id="pgnLimit" class="w-full p-2.5 border border-slate-300 rounded-lg bg-white focus:ring-2 focus:ring-indigo-500 outline-none">
-                            <option value="10">最多 10 局</option>
-                            <option value="20" selected>最多 20 局</option>
-                            <option value="30">最多 30 局</option>
-                            <option value="50">最多 50 局</option>
-                            <option value="100">最多 100 局</option>
-                            <option value="0">全部 (不限制)</option>
-                        </select>
-                        <p class="text-xs text-slate-400 mt-1">統計數據一律使用全部對局，僅 PGN 列表受此限制。</p>
-                    </div>
-                    <div>
-                        <label for="pgnStrategy" class="block text-sm font-medium text-slate-700 mb-1">PGN 選取策略</label>
-                        <select id="pgnStrategy" class="w-full p-2.5 border border-slate-300 rounded-lg bg-white focus:ring-2 focus:ring-indigo-500 outline-none">
-                            <option value="representative" selected>代表性取樣 (依勝負分層・推薦)</option>
-                            <option value="latest">最新優先 (取最近 N 局)</option>
-                        </select>
-                        <p class="text-xs text-slate-400 mt-1" id="strategyHint">依勝/負/和比例分層，並在時間軸上均勻取樣。</p>
-                    </div>
-                </div>
             </div>
-
-            <div id="statusMessage" class="hidden text-sm font-medium p-3 rounded-lg mb-6 border"></div>
-
-            <!-- 輸出 -->
-            <div id="outputSection" class="hidden">
-
-                <!-- 圖表區 -->
-                <div id="chartSection" class="mb-8">
-                    <h2 class="text-base sm:text-lg font-bold text-slate-900 flex items-center mb-3">
-                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 mr-2 text-indigo-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-                        </svg>
-                        數據視覺化
-                    </h2>
-                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                        <div class="bg-white p-3 sm:p-4 rounded-xl border border-slate-200 shadow-sm lg:col-span-2">
-                            <h3 class="text-sm font-semibold text-slate-700 mb-2">勝率對比 (當期 vs 前期)</h3>
-                            <div class="relative h-56 sm:h-64"><canvas id="chartWinRate"></canvas></div>
-                        </div>
-                        <div class="bg-white p-3 sm:p-4 rounded-xl border border-slate-200 shadow-sm">
-                            <h3 class="text-sm font-semibold text-slate-700 mb-2">當期勝/負/和分布</h3>
-                            <div class="relative h-56 sm:h-64"><canvas id="chartWLD"></canvas></div>
-                        </div>
-                        <div class="bg-white p-3 sm:p-4 rounded-xl border border-slate-200 shadow-sm">
-                            <h3 class="text-sm font-semibold text-slate-700 mb-2">執子勝率 (白方 vs 黑方)</h3>
-                            <div class="relative h-56 sm:h-64"><canvas id="chartColor"></canvas></div>
-                        </div>
-                    </div>
-                </div>
-                <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-3 gap-3">
-                    <h2 class="text-base sm:text-lg font-bold text-slate-900 flex items-center">
-                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 mr-2 text-indigo-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                        </svg>
-                        AI 參考資料輸出 (含 PGN 棋譜)
-                    </h2>
-                    <div class="flex space-x-2 w-full sm:w-auto">
-                        <button id="copyBtn" class="flex-1 sm:flex-none bg-slate-800 hover:bg-slate-900 active:bg-black text-white text-sm py-2 px-4 rounded-lg transition cursor-pointer flex justify-center items-center min-h-[40px]">
-                            複製文字
-                        </button>
-                        <button id="downloadBtn" class="flex-1 sm:flex-none bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white text-sm py-2 px-4 rounded-lg transition cursor-pointer flex justify-center items-center min-h-[40px]">
-                            下載 (.txt)
-                        </button>
-                    </div>
-                </div>
-                <textarea id="outputText" readonly class="w-full h-[55vh] min-h-[320px] sm:h-[550px] p-3 sm:p-4 font-mono text-xs sm:text-sm border border-slate-300 rounded-xl bg-slate-50 focus:outline-none focus:ring-2 focus:ring-indigo-500 shadow-inner resize-y"></textarea>
+            <div class="flex-1 flex gap-2">
+                <input type="text" id="usernameInput"
+                       class="flex-1 min-w-0 px-3 py-2 border border-slate-300 rounded-xl bg-white focus:ring-2 focus:ring-indigo-500 outline-none text-sm"
+                       placeholder="輸入 chess.com 帳號，例如 magnus" autocomplete="off" spellcheck="false" autocapitalize="none">
+                <button id="loadBtn"
+                        class="shrink-0 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white font-semibold px-4 rounded-xl transition min-h-[42px] cursor-pointer flex items-center gap-2">
+                    <span id="loadBtnText">載入</span>
+                    <svg id="loadingIcon" class="animate-spin h-4 w-4 hidden" viewBox="0 0 24 24" fill="none">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+                    </svg>
+                </button>
             </div>
         </div>
-    </div>
+    </header>
+
+    <main class="max-w-6xl mx-auto px-4 sm:px-6 py-5 sm:py-6">
+
+        <!-- ===== 共用篩選列 ===== -->
+        <div class="card bg-white rounded-2xl border border-slate-200 shadow-sm p-4 sm:p-5 mb-5">
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                <!-- 時間範圍 -->
+                <div class="lg:col-span-2">
+                    <div class="flex items-center justify-between mb-2">
+                        <label class="text-sm font-semibold text-slate-700">時間範圍</label>
+                        <span id="rangeLabel" class="text-[11px] text-slate-500 font-medium bg-slate-50 border border-slate-200 rounded-full px-2.5 py-0.5">—</span>
+                    </div>
+                    <div id="windowGroup" class="flex flex-wrap gap-2"></div>
+                    <div id="customRange" class="hidden mt-3 grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="block text-xs font-medium text-slate-500 mb-1">從</label>
+                            <input type="date" id="customStart" class="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white focus:ring-2 focus:ring-indigo-500 outline-none text-sm">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-medium text-slate-500 mb-1">到</label>
+                            <input type="date" id="customEnd" class="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white focus:ring-2 focus:ring-indigo-500 outline-none text-sm">
+                        </div>
+                    </div>
+                </div>
+                <!-- 賽制（可複選）-->
+                <div>
+                    <div class="flex items-center justify-between mb-2">
+                        <label class="text-sm font-semibold text-slate-700">賽制</label>
+                        <span class="text-[11px] text-slate-400">可複選</span>
+                    </div>
+                    <div id="typeGroup" class="flex flex-wrap gap-2"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ===== 分頁切換 ===== -->
+        <div class="inline-flex p-1 bg-slate-200/70 rounded-xl mb-5">
+            <button data-tab="analysis" class="tab-btn seg-btn px-4 sm:px-5 py-2 rounded-lg text-sm font-semibold cursor-pointer">📊 深度分析</button>
+            <button data-tab="export" class="tab-btn seg-btn px-4 sm:px-5 py-2 rounded-lg text-sm font-semibold cursor-pointer">🤖 AI 資料匯出</button>
+        </div>
+
+        <div id="statusMessage" class="hidden text-sm font-medium p-3 rounded-xl mb-5 border"></div>
+
+        <div id="emptyState" class="text-center py-16 sm:py-24">
+            <div class="text-5xl mb-3">♟️</div>
+            <p class="text-slate-500 text-sm">輸入 Chess.com 使用者 ID，開始分析戰績。</p>
+        </div>
+
+        <section id="analysisPanel" class="hidden space-y-5"></section>
+
+        <section id="exportPanel" class="hidden space-y-5">
+            <!-- 分析模式 -->
+            <div class="card bg-white rounded-2xl border border-slate-200 shadow-sm p-4 sm:p-5">
+                <label class="text-sm font-semibold text-slate-700 mb-2 block">分析模式</label>
+                <div id="modeGroup" class="flex flex-wrap gap-2"></div>
+                <p id="modeDesc" class="text-xs text-slate-500 mt-2 leading-relaxed"></p>
+            </div>
+
+            <div class="card bg-white rounded-2xl border border-slate-200 shadow-sm p-4 sm:p-5 grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                    <label for="pgnLimit" class="block text-sm font-medium text-slate-700 mb-1">輸出 PGN 棋譜數量</label>
+                    <select id="pgnLimit" class="w-full px-3 py-2.5 border border-slate-300 rounded-lg bg-white focus:ring-2 focus:ring-indigo-500 outline-none text-sm">
+                        <option value="10">最多 10 局</option>
+                        <option value="20" selected>最多 20 局</option>
+                        <option value="30">最多 30 局</option>
+                        <option value="50">最多 50 局</option>
+                        <option value="100">最多 100 局</option>
+                        <option value="0">全部（不限制）</option>
+                    </select>
+                    <p class="text-xs text-slate-400 mt-1">統計數據一律用全部對局，僅 PGN 列表受此限制。</p>
+                </div>
+                <div>
+                    <label for="pgnStrategy" class="block text-sm font-medium text-slate-700 mb-1">PGN 選取策略</label>
+                    <select id="pgnStrategy" class="w-full px-3 py-2.5 border border-slate-300 rounded-lg bg-white focus:ring-2 focus:ring-indigo-500 outline-none text-sm">
+                        <option value="representative" selected>代表性取樣（依勝負分層・推薦）</option>
+                        <option value="latest">最新優先（取最近 N 局）</option>
+                    </select>
+                    <p class="text-xs text-slate-400 mt-1" id="strategyHint">依勝/負/和比例分層，並在時間軸上均勻取樣。</p>
+                </div>
+            </div>
+
+            <div class="card bg-white rounded-2xl border border-slate-200 shadow-sm p-4 sm:p-5">
+                <div class="flex flex-col sm:flex-row justify-between sm:items-center gap-3 mb-3">
+                    <h3 class="text-sm sm:text-base font-bold text-slate-900">AI 參考資料（結構化提示詞 + PGN）</h3>
+                    <div class="flex gap-2 w-full sm:w-auto">
+                        <button id="regenBtn" class="flex-1 sm:flex-none bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 text-sm py-2 px-4 rounded-lg transition cursor-pointer min-h-[40px]">重新產生</button>
+                        <button id="copyBtn" class="flex-1 sm:flex-none bg-slate-800 hover:bg-slate-900 active:bg-black text-white text-sm py-2 px-4 rounded-lg transition cursor-pointer min-h-[40px]">複製</button>
+                        <button id="downloadBtn" class="flex-1 sm:flex-none bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white text-sm py-2 px-4 rounded-lg transition cursor-pointer min-h-[40px]">下載 .md</button>
+                    </div>
+                </div>
+                <textarea id="outputText" readonly class="w-full h-[52vh] min-h-[320px] p-3 sm:p-4 font-mono text-xs sm:text-sm border border-slate-300 rounded-xl bg-slate-50 focus:outline-none focus:ring-2 focus:ring-indigo-500 shadow-inner resize-y"></textarea>
+            </div>
+        </section>
+
+        <footer class="mt-8 text-center text-[11px] text-slate-400 space-y-1">
+            <p>資料來源：Chess.com 公開 API。過去月份永久快取於本機，僅當月每次重抓。</p>
+            <button id="clearCacheBtn" type="button" class="underline underline-offset-2 hover:text-rose-500 cursor-pointer">清除此帳號快取與設定</button>
+        </footer>
+    </main>
 
     <script>
-        // ===== localStorage 持久化 (無痕/容量滿時自動降級，不影響主流程) =====
-        const LS_KEY = 'chessPrompt:v1';
+    // ======================================================================
+    //  設定常數
+    // ======================================================================
+    const APP_VERSION = 1;
+    const CACHE_PREFIX  = 'chessApp:v' + APP_VERSION + ':cache:';
+    const SETTINGS_KEY  = 'chessApp:v' + APP_VERSION + ':settings';
+    const DRAW_RESULTS  = ['agreed', 'stalemate', 'repetition', 'insufficient', 'timevsinsufficient', '50move'];
+    const ENDGAME_PIECE_MAX = 6;
 
-        /** 讀取已儲存的設定物件，失敗回傳空物件 */
-        function loadSettings() {
+    const WINDOWS  = [['7d', '近 7 天'], ['30d', '近 30 天'], ['90d', '近 90 天'], ['1y', '近 1 年'], ['all', '全部'], ['custom', '自訂']];
+    const ALL_TYPES = ['bullet', 'blitz', 'rapid', 'daily'];
+    const TYPE_LABEL = { bullet: 'Bullet', blitz: 'Blitz', rapid: 'Rapid', daily: 'Daily' };
+    const TYPE_COLOR = { bullet: '#ef4444', blitz: '#4f46e5', rapid: '#10b981', daily: '#f59e0b' };
+    const EG_ZH = { kingPawn: '王兵', rookPawn: '車兵', queen: '后翼', minor: '輕子/其他' };
+
+    // AI 匯出模式：每個模式產生不同結構的提示詞，並註解適合分析什麼
+    const EXPORT_MODES = [
+        { id: 'comprehensive', label: '綜合診斷', desc: '全面體檢：綜述、各賽制、開局、戰術、殘局與代表棋譜一次到位。適合第一次分析，或想要整體教練建議時使用。' },
+        { id: 'opening',       label: '開局專項', desc: '聚焦開局選擇與各開局勝率，棋譜以涵蓋多種開局為主。適合檢視／重建開局套路（repertoire）、找出低勝率或不熟悉的開局。' },
+        { id: 'weakness',      label: '弱點診斷', desc: '只看輸棋：輸法分佈（超時／被將殺／認輸）、低勝率開局、殘局失分，棋譜全為代表性敗局。適合止血、找出最該優先修正的漏洞。' },
+        { id: 'endgame',       label: '殘局專項', desc: '聚焦殘局勝率與「進入殘局」的對局棋譜（依終局子力分類）。適合加強收官與殘局技術。' },
+        { id: 'trend',         label: '趨勢追蹤', desc: '對照前一期，比較勝率、積分與戰術比率的進退步（需有前期資料）。適合定期追蹤訓練成效。' }
+    ];
+
+    // ======================================================================
+    //  應用狀態
+    // ======================================================================
+    const state = {
+        username: '',
+        records: [],
+        analysisCache: new Map(),
+        window: '30d',
+        customStart: '',
+        customEnd: '',
+        types: [...ALL_TYPES],        // 賽制複選（需求 6）
+        tab: 'analysis',
+        pgnLimit: 20,
+        pgnStrategy: 'representative',
+        exportMode: 'comprehensive',
+        // 開局排序/篩選（需求 3）
+        openingSort: 'total',         // 'total' | 'winRate'
+        openingMinGames: 3,
+        // 戰術同期比較（需求 4）
+        tacticsCompare: false,
+        charts: {}
+    };
+
+    // ======================================================================
+    //  localStorage
+    // ======================================================================
+    function loadSettings() {
+        try { const raw = localStorage.getItem(SETTINGS_KEY); return raw ? JSON.parse(raw) : {}; }
+        catch (e) { return {}; }
+    }
+    function saveSettings(patch) {
+        try { localStorage.setItem(SETTINGS_KEY, JSON.stringify({ ...loadSettings(), ...patch })); } catch (e) {}
+    }
+    function persistSettings() {
+        saveSettings({
+            username: state.username, window: state.window, types: state.types,
+            customStart: state.customStart, customEnd: state.customEnd,
+            pgnLimit: state.pgnLimit, pgnStrategy: state.pgnStrategy, exportMode: state.exportMode,
+            openingSort: state.openingSort, openingMinGames: state.openingMinGames
+        });
+    }
+    function cacheKey(user) { return CACHE_PREFIX + user.toLowerCase(); }
+    function loadCache(user) {
+        try { const raw = localStorage.getItem(cacheKey(user)); return raw ? JSON.parse(raw) : null; }
+        catch (e) { return null; }
+    }
+    function saveCache(user, data) {
+        try { localStorage.setItem(cacheKey(user), JSON.stringify(data)); return true; }
+        catch (e) { console.warn('快取寫入失敗（可能超出容量）', e); return false; }
+    }
+    function clearCache(user) { try { localStorage.removeItem(cacheKey(user)); } catch (e) {} }
+
+    // ======================================================================
+    //  路由
+    // ======================================================================
+    function resolveUsername() {
+        const hash = decodeURIComponent(location.hash.replace(/^#\/?(?:user\/)?/, '')).trim();
+        if (hash) return hash;
+        const q = new URLSearchParams(location.search).get('user');
+        if (q && q.trim()) return q.trim();
+        const saved = (loadSettings().username || '').trim();
+        if (saved) return saved;
+        return '';
+    }
+
+    // ======================================================================
+    //  非阻塞工具
+    // ======================================================================
+    const yieldToEventLoop = () => new Promise(res => setTimeout(res, 0));
+    async function runPool(items, limit, worker) {
+        let cursor = 0;
+        const size = Math.min(limit, items.length);
+        const runners = Array.from({ length: size }, async () => {
+            while (cursor < items.length) { const idx = cursor++; await worker(items[idx], idx); }
+        });
+        await Promise.all(runners);
+    }
+    async function parseGamesYielding(games, user, chunk = 150) {
+        const out = [];
+        for (let i = 0; i < games.length; i += chunk) {
+            const end = Math.min(i + chunk, games.length);
+            for (let j = i; j < end; j++) out.push(toRecord(games[j], user));
+            if (end < games.length) await yieldToEventLoop();
+        }
+        return out;
+    }
+
+    // ======================================================================
+    //  資料層
+    // ======================================================================
+    async function loadOrUpdate(user) {
+        const archivesUrl = `https://api.chess.com/pub/player/${user}/games/archives`;
+        const res = await fetch(archivesUrl);
+        if (res.status === 404) throw new Error('查無此帳號');
+        if (!res.ok) throw new Error('無法取得封存清單');
+        const { archives } = await res.json();
+        if (!archives || archives.length === 0) throw new Error('此帳號沒有任何對局');
+
+        const cache = loadCache(user) || { version: APP_VERSION, archives: {}, updatedAt: null };
+        if (cache.version !== APP_VERSION) { cache.archives = {}; cache.version = APP_VERSION; }
+
+        const currentMonthUrl = archives[archives.length - 1];
+        const toFetch = archives.filter(url => url === currentMonthUrl || !cache.archives[url]);
+        const fromCache = archives.length - toFetch.length;
+        let fetched = 0;
+
+        await runPool(toFetch, 6, async (url) => {
             try {
-                const raw = localStorage.getItem(LS_KEY);
-                return raw ? JSON.parse(raw) : {};
-            } catch (e) {
-                return {};
+                const r = await fetch(url);
+                if (!r.ok) return;
+                const data = await r.json();
+                cache.archives[url] = await parseGamesYielding(data.games || [], user);
+                fetched++;
+            } catch (e) { console.warn('抓取失敗', url, e); }
+        });
+
+        cache.updatedAt = new Date().toISOString();
+        saveCache(user, cache);
+        const records = Object.values(cache.archives).flat().sort((a, b) => a.end_time - b.end_time);
+        return { records, fetched, fromCache, updatedAt: cache.updatedAt };
+    }
+
+    function toRecord(game, username) {
+        const isWhite = game.white.username.toLowerCase() === username.toLowerCase();
+        const me = isWhite ? game.white : game.black;
+        const opp = isWhite ? game.black : game.white;
+        let result;
+        if (me.result === 'win') result = 'win';
+        else if (DRAW_RESULTS.includes(me.result) || DRAW_RESULTS.includes(opp.result)) result = 'draw';
+        else result = 'loss';
+        const ecoUrl = /\[ECOUrl "([^"]+)"\]/.exec(game.pgn || '');
+        return {
+            end_time: game.end_time, time_class: game.time_class,
+            color: isWhite ? 'white' : 'black', result,
+            myResult: me.result, oppResult: opp.result,
+            myRating: me.rating, oppRating: opp.rating,
+            opening: ecoUrl ? openingNameFromUrl(ecoUrl[1]) : null,
+            url: game.url, pgn: game.pgn || ''
+        };
+    }
+    function openingNameFromUrl(url) {
+        const seg = url.split('/').pop() || '';
+        return decodeURIComponent(seg).replace(/-/g, ' ').trim();
+    }
+    function extractSan(pgn) {
+        let mt = pgn.replace(/^\s*\[[^\]]*\]\s*$/gm, ' ');
+        mt = mt.replace(/\{[^}]*\}/g, ' ').replace(/\([^)]*\)/g, ' ')
+               .replace(/\$\d+/g, ' ').replace(/\d+\.(\.\.)?/g, ' ')
+               .replace(/(1-0|0-1|1\/2-1\/2|\*)\s*$/, ' ');
+        return mt.split(/\s+/).filter(Boolean);
+    }
+    function ensureSan(r) { if (!r._san) r._san = extractSan(r.pgn || ''); return r._san; }
+
+    // ======================================================================
+    //  時間範圍解析（需求 1）
+    // ======================================================================
+    function fmtDate(d) {
+        return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    }
+    function resolveRange() {
+        const now = new Date();
+        const endOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
+        if (state.window === 'all') return { start: null, end: endOfToday, label: '全部對局', valid: true };
+        if (state.window === 'custom') {
+            const s = state.customStart ? new Date(state.customStart + 'T00:00:00') : null;
+            const e = state.customEnd ? new Date(state.customEnd + 'T23:59:59') : endOfToday;
+            if (!s) return { start: null, end: e, label: '請選擇起始日', valid: false };
+            if (s > e) return { start: s, end: e, label: '起始日不能晚於結束日', valid: false };
+            return { start: s, end: e, label: `${fmtDate(s)} ~ ${fmtDate(e)}`, valid: true };
+        }
+        const days = { '7d': 7, '30d': 30, '90d': 90, '1y': 365 }[state.window];
+        const start = new Date(endOfToday.getTime() - days * 86400 * 1000);
+        return { start, end: endOfToday, label: `${fmtDate(start)} ~ ${fmtDate(endOfToday)}`, valid: true };
+    }
+    // 前一期：同長度、緊鄰當期之前（需求 5 的邏輯來源）
+    function resolvePrevRange(range) {
+        if (!range.start) return null;
+        const len = range.end.getTime() - range.start.getTime();
+        const prevEnd = new Date(range.start.getTime() - 1000);
+        const prevStart = new Date(prevEnd.getTime() - len);
+        return { start: prevStart, end: prevEnd, label: `${fmtDate(prevStart)} ~ ${fmtDate(prevEnd)}` };
+    }
+    function filterByRange(records, range, types) {
+        const s = range.start ? Math.floor(range.start.getTime() / 1000) : -Infinity;
+        const e = Math.floor(range.end.getTime() / 1000);
+        return records.filter(r => r.end_time >= s && r.end_time <= e && types.includes(r.time_class));
+    }
+
+    // ======================================================================
+    //  分析（純函式，不含任何需引擎指標）
+    // ======================================================================
+    async function hydrateSan(recs, chunk = 200) {
+        for (let i = 0; i < recs.length; i += chunk) {
+            const end = Math.min(i + chunk, recs.length);
+            for (let j = i; j < end; j++) ensureSan(recs[j]);
+            if (end < recs.length) await yieldToEventLoop();
+        }
+    }
+
+    function analyzeOverview(recs) {
+        const o = { total: recs.length, win: 0, loss: 0, draw: 0, ratingMin: null, ratingMax: null, oppSum: 0, oppN: 0,
+                    byColor: { white: { total: 0, win: 0 }, black: { total: 0, win: 0 } },
+                    ratingByType: {} };
+        recs.forEach(r => {
+            o[r.result]++;
+            o.byColor[r.color].total++; if (r.result === 'win') o.byColor[r.color].win++;
+            if (typeof r.myRating === 'number') {
+                o.ratingMin = o.ratingMin === null ? r.myRating : Math.min(o.ratingMin, r.myRating);
+                o.ratingMax = o.ratingMax === null ? r.myRating : Math.max(o.ratingMax, r.myRating);
+                (o.ratingByType[r.time_class] = o.ratingByType[r.time_class] || []).push({ x: r.end_time * 1000, y: r.myRating });
+            }
+            if (typeof r.oppRating === 'number') { o.oppSum += r.oppRating; o.oppN++; }
+        });
+        o.winRate = o.total ? +((o.win / o.total) * 100).toFixed(2) : 0;
+        o.avgOpp = o.oppN ? Math.round(o.oppSum / o.oppN) : null;
+        ['white', 'black'].forEach(c => o.byColor[c].winRate = o.byColor[c].total ? +((o.byColor[c].win / o.byColor[c].total) * 100).toFixed(1) : 0);
+        return o;
+    }
+
+    function analyzeOpenings(recs) {
+        const acc = { white: {}, black: {} };
+        recs.forEach(r => {
+            const name = r.opening || '未知開局';
+            const b = acc[r.color];
+            b[name] = b[name] || { name, total: 0, win: 0, loss: 0, draw: 0 };
+            b[name].total++; b[name][r.result]++;
+        });
+        const fin = obj => Object.values(obj).map(o => ({ ...o, winRate: o.total ? +((o.win / o.total) * 100).toFixed(1) : 0 }));
+        return { white: fin(acc.white), black: fin(acc.black) };
+    }
+
+    function analyzeTactics(recs) {
+        const t = { mateDelivered: 0, mateReceived: 0, checksBy: 0, checksAgainst: 0, totalPlies: 0,
+                    resignsWon: 0, resignsLost: 0, timeoutWon: 0, timeoutLost: 0 };
+        recs.forEach(r => {
+            if (r.myResult === 'win' && r.oppResult === 'checkmated') t.mateDelivered++;
+            if (r.myResult === 'checkmated') t.mateReceived++;
+            if (r.result === 'win' && (r.oppResult === 'resigned' || r.oppResult === 'abandoned')) t.resignsWon++;
+            if (r.myResult === 'resigned' || r.myResult === 'abandoned') t.resignsLost++;
+            if (r.result === 'win' && r.oppResult === 'timeout') t.timeoutWon++;
+            if (r.myResult === 'timeout') t.timeoutLost++;
+            const iAmWhite = r.color === 'white';
+            (r._san || []).forEach((mv, i) => {
+                const mine = (i % 2 === 0) === iAmWhite;
+                t.totalPlies++;
+                if (mv.includes('+') && !mv.includes('#')) { mine ? t.checksBy++ : t.checksAgainst++; }
+            });
+        });
+        return t;
+    }
+
+    function classifyEndgame(board) {
+        const c = { p: 0, n: 0, b: 0, r: 0, q: 0 }; let nonKing = 0;
+        for (const row of board) for (const sq of row) {
+            if (!sq || sq.type === 'k') continue; c[sq.type]++; nonKing++;
+        }
+        if (nonKing > ENDGAME_PIECE_MAX) return null;
+        if (c.q > 0) return 'queen';
+        if (c.n === 0 && c.b === 0 && c.r === 0) return 'kingPawn';
+        if (c.n === 0 && c.b === 0 && c.r > 0) return 'rookPawn';
+        return 'minor';
+    }
+    async function analyzeEndgames(recs) {
+        const types = ['kingPawn', 'rookPawn', 'queen', 'minor'];
+        const stat = {}; types.forEach(t => stat[t] = { total: 0, win: 0, loss: 0, draw: 0 });
+        let reached = 0, errors = 0;
+        const hasChess = typeof Chess !== 'undefined';
+        if (hasChess) {
+            const CHUNK = 40;
+            for (let i = 0; i < recs.length; i += CHUNK) {
+                const end = Math.min(i + CHUNK, recs.length);
+                for (let k = i; k < end; k++) {
+                    const r = recs[k];
+                    const san = r._san || [];
+                    if (san.length === 0) continue;
+                    try {
+                        const c = new Chess();
+                        for (const mv of san) { if (!c.move(mv, { sloppy: true })) throw 0; }
+                        const type = classifyEndgame(c.board());
+                        if (!type) { r._endgameType = null; continue; }
+                        r._endgameType = type; // 標記此局殘局類型，供匯出「殘局專項」挑選棋譜
+                        reached++; stat[type].total++; stat[type][r.result]++;
+                    } catch (e) { errors++; }
+                }
+                if (end < recs.length) await yieldToEventLoop();
             }
         }
+        types.forEach(t => stat[t].winRate = stat[t].total ? +((stat[t].win / stat[t].total) * 100).toFixed(1) : 0);
+        return { stat, reached, errors, available: hasChess };
+    }
 
-        /** 合併寫入設定 (patch 會覆蓋同名鍵)，寫入失敗時靜默略過 */
-        function saveSettings(patch) {
-            try {
-                localStorage.setItem(LS_KEY, JSON.stringify({ ...loadSettings(), ...patch }));
-            } catch (e) {
-                /* 私密瀏覽或 quota 已滿，忽略 */
+    function typesKey() { return [...state.types].sort().join(','); }
+    function analysisKey() { return `${state.window}:${typesKey()}:${state.customStart}:${state.customEnd}`; }
+
+    async function getAnalysis(range) {
+        const key = analysisKey();
+        if (state.analysisCache.has(key)) return state.analysisCache.get(key);
+        const recs = filterByRange(state.records, range, state.types);
+        await hydrateSan(recs);
+        const result = {
+            filteredCount: recs.length,
+            overview: analyzeOverview(recs),
+            openings: analyzeOpenings(recs),
+            tactics: analyzeTactics(recs),
+            endgames: await analyzeEndgames(recs)
+        };
+        state.analysisCache.set(key, result);
+        return result;
+    }
+    // 供戰術同期比較（需求 4）
+    const tacticsPrevCache = new Map();
+    async function getTacticsFor(range) {
+        const key = `${range.start ? range.start.getTime() : 'x'}:${range.end.getTime()}:${typesKey()}`;
+        if (tacticsPrevCache.has(key)) return tacticsPrevCache.get(key);
+        const recs = filterByRange(state.records, range, state.types);
+        await hydrateSan(recs);
+        const out = { count: recs.length, tactics: analyzeTactics(recs) };
+        tacticsPrevCache.set(key, out);
+        return out;
+    }
+
+    // ======================================================================
+    //  匯出：依賽制彙整 + 前期對比 + PGN 選取
+    // ======================================================================
+    function analyzeByType(recs, types) {
+        const stats = {};
+        types.forEach(tc => stats[tc] = {
+            total: 0, win: 0, loss: 0, draw: 0, endRating: null,
+            win_timeout: 0, loss_timeout: 0, win_mate: 0, loss_mate: 0, win_resign: 0, loss_resign: 0,
+            white: { total: 0, win: 0, loss: 0, draw: 0 }, black: { total: 0, win: 0, loss: 0, draw: 0 }
+        });
+        recs.forEach(r => {
+            const s = stats[r.time_class]; if (!s) return;
+            s.total++; s.endRating = r.myRating;
+            const cs = s[r.color]; cs.total++;
+            if (r.result === 'win') {
+                s.win++; cs.win++;
+                if (r.oppResult === 'timeout') s.win_timeout++;
+                else if (r.oppResult === 'checkmated') s.win_mate++;
+                else if (r.oppResult === 'resigned' || r.oppResult === 'abandoned') s.win_resign++;
+            } else if (r.result === 'draw') { s.draw++; cs.draw++; }
+            else {
+                s.loss++; cs.loss++;
+                if (r.myResult === 'timeout') s.loss_timeout++;
+                else if (r.myResult === 'checkmated') s.loss_mate++;
+                else if (r.myResult === 'resigned' || r.myResult === 'abandoned') s.loss_resign++;
             }
+        });
+        for (const tc in stats) {
+            const s = stats[tc];
+            s.winRate = s.total ? +((s.win / s.total) * 100).toFixed(2) : 0;
+            ['white', 'black'].forEach(c => stats[tc][c].winRate = stats[tc][c].total ? +((stats[tc][c].win / stats[tc][c].total) * 100).toFixed(2) : 0);
+        }
+        return stats;
+    }
+    function evenlySpacedSample(arr, n) {
+        if (n >= arr.length) return [...arr];
+        if (n <= 0) return [];
+        if (n === 1) return [arr[arr.length - 1]];
+        const picked = [];
+        const step = (arr.length - 1) / (n - 1);
+        for (let i = 0; i < n; i++) picked.push(arr[Math.round(i * step)]);
+        return Array.from(new Set(picked));
+    }
+    function allocateCounts(groups, limit) {
+        const keys = Object.keys(groups).filter(k => groups[k].length > 0);
+        const total = keys.reduce((s, k) => s + groups[k].length, 0);
+        if (total === 0) return {};
+        const raw = keys.map(k => ({ k, exact: limit * groups[k].length / total }));
+        const alloc = {}; let used = 0;
+        raw.forEach(r => { alloc[r.k] = Math.floor(r.exact); used += alloc[r.k]; });
+        const remainder = limit - used;
+        const byFraction = [...raw].sort((a, b) => (b.exact - Math.floor(b.exact)) - (a.exact - Math.floor(a.exact)));
+        for (let i = 0; i < remainder && byFraction.length > 0; i++) alloc[byFraction[i % byFraction.length].k]++;
+        keys.forEach(k => { alloc[k] = Math.min(alloc[k], groups[k].length); });
+        return alloc;
+    }
+    function selectPgnGames(games, limit, strategy) {
+        if (!limit || limit >= games.length) return games;
+        if (limit <= 0) return [];
+        if (strategy === 'latest') return games.slice(games.length - limit);
+        const groups = { win: [], loss: [], draw: [] };
+        games.forEach(g => groups[g.result].push(g));
+        const alloc = allocateCounts(groups, limit);
+        const picked = [];
+        Object.keys(groups).forEach(k => picked.push(...evenlySpacedSample(groups[k], alloc[k] || 0)));
+        return picked.sort((a, b) => a.end_time - b.end_time);
+    }
+
+    // 提示詞小工具
+    const RESULT_ZH = { win: '勝', loss: '負', draw: '和' };
+    function fmtN(c, p) { const d = c - p; return d > 0 ? `+${d}` : `${d}`; }
+    function fmtR(c, p) { const d = (c - p).toFixed(2); return (d > 0 ? '+' : '') + d; }
+    function openLines(rows, n) {
+        return processOpenings(rows).slice(0, n).map((o, i) =>
+            `${i + 1}. ${o.name}：${o.total} 局，勝率 ${o.winRate}%（${o.win}-${o.loss}-${o.draw}）`).join('\n');
+    }
+    function pgnSection(games, note) {
+        const sorted = games.slice().sort((a, b) => a.end_time - b.end_time);
+        const selected = selectPgnGames(sorted, state.pgnLimit, state.pgnStrategy);
+        let s = `## 棋譜樣本（PGN）\n> ${note}｜符合 ${games.length} 局，輸出 ${selected.length} 局\n\n`;
+        if (!selected.length) return s + '（無符合條件的棋譜）\n\n';
+        selected.forEach((g, i) => {
+            const egTag = g._endgameType ? `　殘局：${EG_ZH[g._endgameType]}` : '';
+            s += `### 對局 ${i + 1}　${g.time_class.toUpperCase()}　結果：${RESULT_ZH[g.result]}${egTag}\n`;
+            s += '```pgn\n' + (g.pgn || `無 PGN（網址：${g.url}）`) + '\n```\n\n';
+        });
+        return s;
+    }
+    function ctxHeader(ctx, title, role, task) {
+        let md = `# ${title}\n\n${role}\n${task}\n\n## 資料範圍\n`;
+        md += `- 玩家：${ctx.user}\n- 賽制：${ctx.typeLabel}\n- 當期區間：${ctx.range.label}（${ctx.curRecs.length} 局）\n`;
+        if (ctx.hasPrev) md += `- 前期區間：${ctx.prevRange.label}（${ctx.prevRecs.length} 局；與當期等長且緊鄰其前，用於趨勢對比）\n`;
+        else md += `- 前期區間：無（此區間之前無對局，或選擇了「全部」）\n`;
+        md += `- 產出時間：${new Date().toLocaleString()}\n\n`;
+        return md;
+    }
+    function outputBlock(items) { return `## 請依序輸出\n` + items.map((s, i) => `${i + 1}. ${s}`).join('\n') + '\n'; }
+
+    // ---- 各模式 builder ----
+    function buildComprehensive(ctx) {
+        const { cur, prv, analysis, types, hasPrev } = ctx;
+        let md = ctxHeader(ctx, '西洋棋教練綜合分析請求',
+            '你是一位資深西洋棋教練與數據分析師。以下是玩家的 Chess.com 對局統計與棋譜樣本。',
+            '請客觀診斷其棋力現況、找出弱點，並給出可執行的改進建議。');
+        const ov = analysis.overview;
+        md += `## 綜合戰績\n- 總場次：${ov.total}　勝率：${ov.winRate}%（勝 ${ov.win}／負 ${ov.loss}／和 ${ov.draw}）\n`;
+        md += `- 積分區間：${ov.ratingMin != null ? `${ov.ratingMin}–${ov.ratingMax}` : '無資料'}　平均對手：${ov.avgOpp ?? '無資料'}\n`;
+        md += `- 執白勝率：${ov.byColor.white.winRate}%（${ov.byColor.white.total} 局）　執黑勝率：${ov.byColor.black.winRate}%（${ov.byColor.black.total} 局）\n\n`;
+
+        md += `## 各賽制數據${hasPrev ? '（當期 vs 前期）' : ''}\n`;
+        types.forEach(tc => {
+            const c = cur[tc], p = prv[tc] || analyzeByType([], [tc])[tc];
+            md += `\n### ${TYPE_LABEL[tc]}\n`;
+            if (hasPrev) {
+                const curR = c.endRating || '無資料', prvR = p.endRating || '無資料';
+                let dR = 'N/A';
+                if (typeof curR === 'number' && typeof prvR === 'number') { const d = curR - prvR; dR = d > 0 ? `+${d}` : `${d}`; }
+                md += `| 指標 | 當期 | 前期 | 變化 |\n|---|---|---|---|\n`;
+                md += `| 場次 | ${c.total} | ${p.total} | ${fmtN(c.total, p.total)} |\n`;
+                md += `| 勝率 | ${c.winRate}% | ${p.winRate}% | ${fmtR(c.winRate, p.winRate)}% |\n`;
+                md += `| 結算積分 | ${curR} | ${prvR} | ${dR} |\n`;
+                md += `| 執白 (勝-負-和) | ${c.white.win}-${c.white.loss}-${c.white.draw} (${c.white.winRate}%) | ${p.white.win}-${p.white.loss}-${p.white.draw} (${p.white.winRate}%) | ${fmtR(c.white.winRate, p.white.winRate)}% |\n`;
+                md += `| 執黑 (勝-負-和) | ${c.black.win}-${c.black.loss}-${c.black.draw} (${c.black.winRate}%) | ${p.black.win}-${p.black.loss}-${p.black.draw} (${p.black.winRate}%) | ${fmtR(c.black.winRate, p.black.winRate)}% |\n`;
+                md += `| 超時 贏/輸 | ${c.win_timeout}/${c.loss_timeout} | ${p.win_timeout}/${p.loss_timeout} | — |\n`;
+                md += `| 將殺 贏/輸 | ${c.win_mate}/${c.loss_mate} | ${p.win_mate}/${p.loss_mate} | — |\n`;
+                md += `| 認輸 贏/輸 | ${c.win_resign}/${c.loss_resign} | ${p.win_resign}/${p.loss_resign} | — |\n`;
+            } else {
+                md += `- 場次 ${c.total}　勝率 ${c.winRate}%　結算積分 ${c.endRating || '無資料'}\n`;
+                md += `- 執白 ${c.white.win}-${c.white.loss}-${c.white.draw}（${c.white.winRate}%）　執黑 ${c.black.win}-${c.black.loss}-${c.black.draw}（${c.black.winRate}%）\n`;
+                md += `- 超時 贏${c.win_timeout}/輸${c.loss_timeout}　將殺 贏${c.win_mate}/輸${c.loss_mate}　認輸 贏${c.win_resign}/輸${c.loss_resign}\n`;
+            }
+        });
+        md += `\n## 常用開局（最少 ${state.openingMinGames} 局，依${state.openingSort === 'winRate' ? '勝率' : '局數'}排序）\n`;
+        md += `**執白：**\n${openLines(analysis.openings.white, 5) || '（無足量樣本）'}\n\n`;
+        md += `**執黑：**\n${openLines(analysis.openings.black, 5) || '（無足量樣本）'}\n\n`;
+
+        const t = analysis.tactics;
+        md += `## 戰術與收官\n- 給出將殺 ${t.mateDelivered}／被將殺 ${t.mateReceived}　　逼降對手 ${t.resignsWon}／我方認輸 ${t.resignsLost}\n`;
+        md += `- 超時贏 ${t.timeoutWon}／超時輸 ${t.timeoutLost}　　將軍：我方 ${t.checksBy} 次／被將軍 ${t.checksAgainst} 次\n\n`;
+        const eg = analysis.endgames;
+        if (eg.available) {
+            const e = eg.stat;
+            md += `## 殘局勝率（依終局子力，共 ${eg.reached} 局進入殘局）\n`;
+            md += `- 王兵：${e.kingPawn.total ? e.kingPawn.winRate + '%' : '—'}（${e.kingPawn.total} 局）　車兵：${e.rookPawn.total ? e.rookPawn.winRate + '%' : '—'}（${e.rookPawn.total} 局）\n`;
+            md += `- 后翼：${e.queen.total ? e.queen.winRate + '%' : '—'}（${e.queen.total} 局）　輕子/其他：${e.minor.total ? e.minor.winRate + '%' : '—'}（${e.minor.total} 局）\n\n`;
+        }
+        md += pgnSection(ctx.curRecs, '代表性對局（依勝負分層取樣）');
+        const outs = ['**總體評估**：棋力概況、最突出的優勢與最需修正的弱點。',
+            '**開局建議**：針對低勝率或棋理不佳的開局，給出改進方向或替代選擇。',
+            '**中局／戰術**：從將殺、認輸、將軍數據與棋譜，指出戰術盲點與思考習慣問題。',
+            '**殘局與時間管理**：依殘局勝率與超時數據，判斷收官與時間分配的弱點。'];
+        if (hasPrev) outs.push('**趨勢判讀**：對照前期，說明進步或退步之處與可能原因。');
+        outs.push('**未來一週練習重點**：列出 2–3 個最高優先的具體練習項目。');
+        return md + outputBlock(outs);
+    }
+
+    function buildOpening(ctx) {
+        const { analysis } = ctx;
+        let md = ctxHeader(ctx, '開局套路分析請求',
+            '你是一位專精開局理論的西洋棋教練。',
+            '請聚焦此玩家的開局選擇與成效，協助檢視並優化其開局套路（repertoire）。');
+        md += `## 執子概況\n- 執白勝率 ${analysis.overview.byColor.white.winRate}%（${analysis.overview.byColor.white.total} 局）　執黑勝率 ${analysis.overview.byColor.black.winRate}%（${analysis.overview.byColor.black.total} 局）\n\n`;
+        md += `## 開局成效（最少 ${state.openingMinGames} 局，依${state.openingSort === 'winRate' ? '勝率' : '局數'}排序）\n`;
+        md += `**執白（前 10）：**\n${openLines(analysis.openings.white, 10) || '（無足量樣本）'}\n\n`;
+        md += `**執黑（前 10）：**\n${openLines(analysis.openings.black, 10) || '（無足量樣本）'}\n\n`;
+        md += pgnSection(ctx.curRecs, '涵蓋不同開局的代表對局');
+        return md + outputBlock([
+            '目前開局套路的優缺點（過度依賴單一開局、低勝率、棋理不佳者）。',
+            '執白與執黑各推薦 1–2 套穩健且風格相符的主線與關鍵變例。',
+            '針對勝率偏低的開局，指出常見失誤點與改善方向。',
+            '建議的開局學習順序與練習重點。'
+        ]);
+    }
+
+    function buildWeakness(ctx) {
+        const { analysis } = ctx;
+        const losses = ctx.curRecs.filter(r => r.result === 'loss');
+        let to = 0, mate = 0, resign = 0, other = 0;
+        losses.forEach(r => {
+            if (r.myResult === 'timeout') to++;
+            else if (r.myResult === 'checkmated') mate++;
+            else if (r.myResult === 'resigned' || r.myResult === 'abandoned') resign++;
+            else other++;
+        });
+        const p = n => losses.length ? (n / losses.length * 100).toFixed(1) : 0;
+        let md = ctxHeader(ctx, '棋力弱點診斷請求',
+            '你是一位擅長找出並修正弱點的西洋棋教練。',
+            '請只聚焦「輸棋」的原因，找出反覆出現的失誤模式與最該優先修正的漏洞。');
+        const wL = losses.filter(r => r.color === 'white').length;
+        const bL = losses.filter(r => r.color === 'black').length;
+        md += `## 輸棋概況\n- 敗局 ${losses.length} 局（占全部 ${ctx.curRecs.length} 局的 ${ctx.curRecs.length ? (losses.length / ctx.curRecs.length * 100).toFixed(1) : 0}%）\n`;
+        md += `- 輸法分佈：超時 ${to}（${p(to)}%）／被將殺 ${mate}（${p(mate)}%）／認輸 ${resign}（${p(resign)}%）／其他 ${other}（${p(other)}%）\n`;
+        md += `- 敗局執子分佈：執白輸 ${wL} 局（${p(wL)}%）／執黑輸 ${bL} 局（${p(bL)}%）\n\n`;
+        md += `## 低勝率開局（勝率 < 50%，最少 ${state.openingMinGames} 局）\n`;
+        const low = rows => processOpenings(rows).filter(o => o.winRate < 50).slice(0, 6)
+            .map((o, i) => `${i + 1}. ${o.name}：${o.total} 局，勝率 ${o.winRate}%（輸 ${o.loss}）`).join('\n');
+        md += `**執白：**\n${low(analysis.openings.white) || '（無明顯低勝率開局）'}\n\n`;
+        md += `**執黑：**\n${low(analysis.openings.black) || '（無明顯低勝率開局）'}\n\n`;
+        const eg = analysis.endgames;
+        if (eg.available) {
+            const e = eg.stat;
+            md += `## 殘局失分\n- 王兵 輸 ${e.kingPawn.loss}／${e.kingPawn.total}　車兵 輸 ${e.rookPawn.loss}／${e.rookPawn.total}　后翼 輸 ${e.queen.loss}／${e.queen.total}　輕子/其他 輸 ${e.minor.loss}／${e.minor.total}\n\n`;
+        }
+        md += pgnSection(losses, '代表性敗局（依賽制分佈取樣）');
+        return md + outputBlock([
+            '歸納反覆出現的失誤類型（開局吃虧、中局漏著、殘局技術、時間管理）。',
+            '從敗局棋譜指出最關鍵的轉折點與更好的走法方向。',
+            '依「投報率」排序，列出最該優先修正的 2–3 個弱點。',
+            '對應每個弱點，給出具體練習方法。'
+        ]);
+    }
+
+    function buildEndgame(ctx) {
+        const eg = ctx.analysis.endgames;
+        let md = ctxHeader(ctx, '殘局技術分析請求',
+            '你是一位專精殘局的西洋棋教練。',
+            '請聚焦此玩家的殘局表現，評估其收官技術並給出訓練方向。');
+        if (!eg.available) {
+            md += `## 殘局資料\n（chess.js 未載入，無法重播盤面分類殘局。請確認網路後重試。）\n\n`;
+            return md + outputBlock(['依現有資訊給出一般性的殘局訓練建議。']);
+        }
+        const e = eg.stat;
+        md += `## 殘局勝率（依終局子力，共 ${eg.reached} 局進入殘局；判定：終局非王棋子 ≤ ${ENDGAME_PIECE_MAX}）\n`;
+        md += `| 類型 | 局數 | 勝-負-和 | 勝率 |\n|---|---|---|---|\n`;
+        ['kingPawn', 'rookPawn', 'queen', 'minor'].forEach(k => {
+            const s = e[k];
+            md += `| ${EG_ZH[k]} | ${s.total} | ${s.win}-${s.loss}-${s.draw} | ${s.total ? s.winRate + '%' : '—'} |\n`;
+        });
+        md += `\n`;
+        const egGames = ctx.curRecs.filter(r => r._endgameType);
+        md += pgnSection(egGames, '進入殘局的代表對局');
+        return md + outputBlock([
+            '指出殘局中最弱的子力類型與常見技術缺口（如車兵殘局的關鍵方格、后翼收官）。',
+            '從棋譜的殘局階段找出可改善的關鍵決策。',
+            '推薦對應的殘局訓練主題與練習順序。'
+        ]);
+    }
+
+    function buildTrend(ctx) {
+        if (!ctx.hasPrev) {
+            let md = ctxHeader(ctx, '訓練成效趨勢分析請求',
+                '你是一位追蹤學員進度的西洋棋教練。',
+                '本模式需要「前期資料」才能對比。');
+            md += `## 無法對比\n目前區間之前沒有可對比的對局（或選擇了「全部」）。\n請將時間範圍改為有界區間（如近 30 天／近 90 天／自訂），且該區間之前需有對局，再重新產生。\n`;
+            return md;
+        }
+        const { cur, prv, analysis, prevOverview, prevTactics, types } = ctx;
+        const ov = analysis.overview, po = prevOverview;
+        let md = ctxHeader(ctx, '訓練成效趨勢分析請求',
+            '你是一位追蹤學員進度的西洋棋教練與數據分析師。',
+            '請對照前一期，判斷此玩家是進步還是退步，並分析可能原因。');
+        md += `## 整體變化（當期 vs 前期）\n| 指標 | 當期 | 前期 | 變化 |\n|---|---|---|---|\n`;
+        md += `| 場次 | ${ov.total} | ${po.total} | ${fmtN(ov.total, po.total)} |\n`;
+        md += `| 勝率 | ${ov.winRate}% | ${po.winRate}% | ${fmtR(ov.winRate, po.winRate)}% |\n`;
+        md += `| 平均對手 | ${ov.avgOpp ?? '—'} | ${po.avgOpp ?? '—'} | ${typeof ov.avgOpp === 'number' && typeof po.avgOpp === 'number' ? fmtN(ov.avgOpp, po.avgOpp) : '—'} |\n`;
+        md += `| 執白勝率 | ${ov.byColor.white.winRate}% | ${po.byColor.white.winRate}% | ${fmtR(ov.byColor.white.winRate, po.byColor.white.winRate)}% |\n`;
+        md += `| 執黑勝率 | ${ov.byColor.black.winRate}% | ${po.byColor.black.winRate}% | ${fmtR(ov.byColor.black.winRate, po.byColor.black.winRate)}% |\n\n`;
+
+        md += `## 各賽制積分與勝率變化\n| 賽制 | 當期勝率 | 前期勝率 | 積分變化 |\n|---|---|---|---|\n`;
+        types.forEach(tc => {
+            const c = cur[tc], p = prv[tc] || analyzeByType([], [tc])[tc];
+            let dR = '—';
+            if (typeof c.endRating === 'number' && typeof p.endRating === 'number') dR = fmtN(c.endRating, p.endRating);
+            md += `| ${TYPE_LABEL[tc]} | ${c.winRate}% | ${p.winRate}% | ${dR} |\n`;
+        });
+        md += `\n`;
+
+        if (prevTactics) {
+            const t = analysis.tactics, pt = prevTactics;
+            const cg = ctx.curRecs.length, pg = ctx.prevRecs.length;
+            const rate = (n, d) => d ? (n / d * 100).toFixed(1) : '0';
+            md += `## 戰術比率變化（每局占比，已消除局數差異）\n| 指標 | 當期 | 前期 |\n|---|---|---|\n`;
+            md += `| 給出將殺率 | ${rate(t.mateDelivered, cg)}% | ${rate(pt.mateDelivered, pg)}% |\n`;
+            md += `| 被將殺率 | ${rate(t.mateReceived, cg)}% | ${rate(pt.mateReceived, pg)}% |\n`;
+            md += `| 認輸率 | ${rate(t.resignsLost, cg)}% | ${rate(pt.resignsLost, pg)}% |\n`;
+            md += `| 超時輸率 | ${rate(t.timeoutLost, cg)}% | ${rate(pt.timeoutLost, pg)}% |\n\n`;
+        }
+        return md + outputBlock([
+            '總結這段期間是進步、退步還是持平，並指出最明顯的變化。',
+            '分析變化的可能原因（開局調整、時間管理、對手強度、狀態起伏等）。',
+            '指出仍未改善、需要持續關注的項目。',
+            '給出下一階段的訓練調整建議。'
+        ]);
+    }
+
+    const MODE_BUILDERS = {
+        comprehensive: buildComprehensive, opening: buildOpening,
+        weakness: buildWeakness, endgame: buildEndgame, trend: buildTrend
+    };
+
+    // 依所選模式產生結構化提示詞
+    async function generateReport() {
+        const out = document.getElementById('outputText');
+        const range = resolveRange();
+        if (!range.valid) { out.value = `無法產生：時間範圍無效（${range.label}）。`; return; }
+
+        const curRecs = filterByRange(state.records, range, state.types);
+        const types = ALL_TYPES.filter(tc => state.types.includes(tc) && curRecs.some(r => r.time_class === tc));
+        if (curRecs.length === 0 || types.length === 0) { out.value = `此區間（${range.label}）無符合條件的對局。`; return; }
+
+        const prevRange = resolvePrevRange(range);
+        const prevRecs = prevRange ? filterByRange(state.records, prevRange, state.types) : [];
+        const hasPrev = prevRecs.length > 0;
+
+        const analysis = await getAnalysis(range); // 綜述/開局/殘局/戰術（並標記各局殘局類型）
+
+        const ctx = {
+            user: state.username, range, prevRange, hasPrev, types,
+            typeLabel: types.map(t => TYPE_LABEL[t]).join('、'),
+            curRecs, prevRecs,
+            cur: analyzeByType(curRecs, types),
+            prv: analyzeByType(prevRecs, types),
+            analysis,
+            prevOverview: hasPrev ? analyzeOverview(prevRecs) : null,
+            prevTactics: null
+        };
+        // 趨勢模式才需要前期戰術（避免其他模式多算）
+        if (state.exportMode === 'trend' && hasPrev) ctx.prevTactics = (await getTacticsFor(prevRange)).tactics;
+
+        const builder = MODE_BUILDERS[state.exportMode] || buildComprehensive;
+        out.value = builder(ctx);
+    }
+
+    // ======================================================================
+    //  UI 共用
+    // ======================================================================
+    function esc(s) { return String(s).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])); }
+
+    function buildFilterButtons() {
+        const wg = document.getElementById('windowGroup');
+        const tg = document.getElementById('typeGroup');
+        wg.innerHTML = ''; tg.innerHTML = '';
+        WINDOWS.forEach(([v, l]) => wg.appendChild(makeWindowPill(v, l)));
+        // 賽制複選：全部 + 各賽制
+        tg.appendChild(makeTypePill('__all__', '全部'));
+        ALL_TYPES.forEach(v => tg.appendChild(makeTypePill(v, TYPE_LABEL[v])));
+        syncPills();
+    }
+    // AI 匯出：分析模式膠囊
+    function buildModeButtons() {
+        const g = document.getElementById('modeGroup');
+        g.innerHTML = '';
+        EXPORT_MODES.forEach(m => {
+            const b = document.createElement('button');
+            b.type = 'button'; b.dataset.mode = m.id; b.textContent = m.label;
+            b.className = 'pill mode-pill px-3 py-1.5 rounded-lg text-sm font-medium border cursor-pointer';
+            b.addEventListener('click', () => {
+                state.exportMode = m.id; syncMode(); persistSettings();
+                if (state.records.length && state.tab === 'export') generateReport().catch(e => console.error(e));
+            });
+            g.appendChild(b);
+        });
+        syncMode();
+    }
+    function syncMode() {
+        document.querySelectorAll('.mode-pill').forEach(b => {
+            const active = state.exportMode === b.dataset.mode;
+            b.className = 'pill mode-pill px-3 py-1.5 rounded-lg text-sm font-medium border cursor-pointer ' +
+                (active ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm' : 'bg-white text-slate-600 border-slate-300 hover:border-indigo-400');
+        });
+        const m = EXPORT_MODES.find(x => x.id === state.exportMode);
+        document.getElementById('modeDesc').textContent = m ? m.desc : '';
+    }
+
+    function makeWindowPill(val, label) {
+        const b = document.createElement('button');
+        b.type = 'button'; b.dataset.win = val; b.textContent = label;
+        b.className = 'pill win-pill px-3 py-1.5 rounded-lg text-sm font-medium border cursor-pointer';
+        b.addEventListener('click', () => {
+            state.window = val;
+            document.getElementById('customRange').classList.toggle('hidden', val !== 'custom');
+            syncPills(); updateRangeLabel(); persistSettings();
+            if (state.records.length && resolveRange().valid) { state.analysisCache.clear(); tacticsPrevCache.clear(); refreshActiveTab(); }
+        });
+        return b;
+    }
+    function makeTypePill(val, label) {
+        const b = document.createElement('button');
+        b.type = 'button'; b.dataset.type = val; b.textContent = label;
+        b.className = 'pill type-pill px-3 py-1.5 rounded-lg text-sm font-medium border cursor-pointer';
+        b.addEventListener('click', () => onTypeClick(val));
+        return b;
+    }
+    function onTypeClick(val) {
+        if (val === '__all__') {
+            state.types = state.types.length === ALL_TYPES.length ? [...ALL_TYPES] : [...ALL_TYPES];
+        } else {
+            const has = state.types.includes(val);
+            let next = has ? state.types.filter(t => t !== val) : [...state.types, val];
+            if (next.length === 0) next = [val]; // 至少一種
+            state.types = ALL_TYPES.filter(t => next.includes(t));
+        }
+        syncPills(); persistSettings();
+        if (state.records.length) { state.analysisCache.clear(); tacticsPrevCache.clear(); refreshActiveTab(); }
+    }
+    function syncPills() {
+        document.querySelectorAll('.win-pill').forEach(b => {
+            const active = state.window === b.dataset.win;
+            b.className = 'pill win-pill px-3 py-1.5 rounded-lg text-sm font-medium border cursor-pointer ' +
+                (active ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm' : 'bg-white text-slate-600 border-slate-300 hover:border-indigo-400');
+        });
+        const allOn = state.types.length === ALL_TYPES.length;
+        document.querySelectorAll('.type-pill').forEach(b => {
+            const v = b.dataset.type;
+            const active = v === '__all__' ? allOn : state.types.includes(v);
+            b.className = 'pill type-pill px-3 py-1.5 rounded-lg text-sm font-medium border cursor-pointer ' +
+                (active ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm' : 'bg-white text-slate-600 border-slate-300 hover:border-indigo-400');
+        });
+    }
+    function updateRangeLabel() {
+        const r = resolveRange();
+        const el = document.getElementById('rangeLabel');
+        el.textContent = r.label;
+        el.className = 'text-[11px] font-medium rounded-full px-2.5 py-0.5 border ' +
+            (r.valid ? 'text-indigo-600 bg-indigo-50 border-indigo-200' : 'text-rose-600 bg-rose-50 border-rose-200');
+    }
+
+    function syncTabs() {
+        document.querySelectorAll('.tab-btn').forEach(b => {
+            const active = b.dataset.tab === state.tab;
+            b.className = 'tab-btn seg-btn px-4 sm:px-5 py-2 rounded-lg text-sm font-semibold cursor-pointer ' +
+                (active ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700');
+        });
+        document.getElementById('analysisPanel').classList.toggle('hidden', state.tab !== 'analysis' || !state.records.length);
+        document.getElementById('exportPanel').classList.toggle('hidden', state.tab !== 'export' || !state.records.length);
+    }
+    function refreshActiveTab() {
+        if (!state.records.length) return;
+        document.getElementById('emptyState').classList.add('hidden');
+        syncTabs();
+        if (state.tab === 'analysis') renderAnalysis().catch(e => console.error(e));
+        else generateReport().catch(e => console.error(e));
+    }
+
+    // ======================================================================
+    //  分析面板卡片元件
+    // ======================================================================
+    function stat(label, val, color, sub) {
+        return `<div class="bg-slate-50 rounded-lg p-3 text-center">
+            <div class="text-lg sm:text-xl font-bold ${color || 'text-slate-900'}">${val}</div>
+            <div class="text-xs text-slate-500 mt-0.5">${label}</div>
+            ${sub ? `<div class="text-[11px] text-slate-400">${sub}</div>` : ''}
+        </div>`;
+    }
+    // 比率工具：以局數為分母消除兩期局數差異（需求：比較要用 %）
+    function pctOf(n, d) { return d ? +((n / d) * 100).toFixed(1) : 0; }
+    function perGame(n, d) { return d ? +(n / d).toFixed(2) : 0; }
+
+    function deltaBadge(cur, prev, unit = '', goodUp = true) {
+        const d = +(cur - prev).toFixed(1);
+        if (d === 0) return `<span class="text-[11px] text-slate-400">±0${unit}</span>`;
+        const up = d > 0;
+        const good = goodUp ? up : !up;
+        const cls = good ? 'text-emerald-600' : 'text-rose-600';
+        return `<span class="text-[11px] font-semibold ${cls}">${up ? '▲' : '▼'} ${up ? '+' : ''}${d}${unit}</span>`;
+    }
+    function statCompare(label, cur, prev, color, unit, goodUp) {
+        return `<div class="bg-slate-50 rounded-lg p-3 text-center">
+            <div class="text-lg sm:text-xl font-bold ${color || 'text-slate-900'}">${cur}${unit || ''}</div>
+            <div class="text-xs text-slate-500 mt-0.5">${label}</div>
+            <div class="mt-0.5">${deltaBadge(cur, prev, unit || '', goodUp !== false)}</div>
+        </div>`;
+    }
+    function egStat(label, s) {
+        return `<div class="bg-slate-50 rounded-lg p-3 text-center">
+            <div class="text-lg font-bold ${s.total ? 'text-indigo-600' : 'text-slate-300'}">${s.total ? s.winRate + '%' : '—'}</div>
+            <div class="text-xs text-slate-500 mt-0.5">${label}</div>
+            <div class="text-[11px] text-slate-400">${s.total} 局 (${s.win}/${s.loss}/${s.draw})</div>
+        </div>`;
+    }
+    function card(title, bodyHtml, note) {
+        return `<div class="card bg-white rounded-2xl border border-slate-200 shadow-sm p-4 sm:p-5 fade-in">
+            <div class="flex items-center justify-between gap-2 mb-3"><h3 class="text-sm sm:text-base font-bold text-slate-900">${title}</h3></div>
+            ${bodyHtml}
+            ${note ? `<p class="text-xs text-slate-400 mt-3">${note}</p>` : ''}
+        </div>`;
+    }
+
+    // 開局：套用最少局數 + 排序（需求 3）
+    function processOpenings(rows) {
+        const min = state.openingMinGames;
+        return rows.filter(o => o.total >= min)
+                   .sort((a, b) => state.openingSort === 'winRate'
+                       ? (b.winRate - a.winRate) || (b.total - a.total)
+                       : (b.total - a.total) || (b.winRate - a.winRate));
+    }
+    function openingTable(title, rows) {
+        const list = processOpenings(rows).slice(0, 8);
+        if (!list.length) return `<div class="text-xs font-semibold text-slate-500 mb-1">${title}</div><div class="text-xs text-slate-400">無達標樣本（&lt; ${state.openingMinGames} 局）</div>`;
+        const body = list.map((o, i) => `<tr class="border-t border-slate-100">
+            <td class="py-1.5 pr-1 text-slate-400 tabular-nums text-right w-6">${i + 1}</td>
+            <td class="py-1.5 px-2 text-slate-700">${esc(o.name)}</td>
+            <td class="py-1.5 px-1 text-right tabular-nums">${o.total}</td>
+            <td class="py-1.5 pl-2 text-right tabular-nums font-semibold ${o.winRate >= 50 ? 'text-emerald-600' : 'text-rose-600'}">${o.winRate}%</td>
+        </tr>`).join('');
+        return `<div class="text-xs font-semibold text-slate-500 mb-1">${title}</div>
+            <table class="w-full text-xs sm:text-sm">
+                <thead><tr class="text-slate-400 text-xs"><th class="w-6"></th><th class="text-left font-medium">開局</th><th class="text-right font-medium">局數</th><th class="text-right font-medium">勝率</th></tr></thead>
+                <tbody>${body}</tbody>
+            </table>`;
+    }
+    function openingControls() {
+        const sortPill = (val, label) => `<button data-osort="${val}" class="o-sort px-2.5 py-1 rounded-md text-xs font-medium border cursor-pointer ${state.openingSort === val ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-slate-600 border-slate-300'}">${label}</button>`;
+        return `<div class="flex flex-wrap items-center gap-3 mb-3">
+            <div class="flex items-center gap-1.5"><span class="text-xs text-slate-500">排序</span>${sortPill('total', '依局數')}${sortPill('winRate', '依勝率')}</div>
+            <div class="flex items-center gap-1.5"><span class="text-xs text-slate-500">最少局數</span>
+                <input id="oMinGames" type="number" min="1" max="99" value="${state.openingMinGames}" class="w-16 px-2 py-1 border border-slate-300 rounded-md text-xs outline-none focus:ring-2 focus:ring-indigo-500">
+            </div>
+        </div>`;
+    }
+
+    let renderToken = 0;
+    async function renderAnalysis() {
+        const my = ++renderToken;
+        const panel = document.getElementById('analysisPanel');
+        panel.classList.remove('hidden');
+
+        const range = resolveRange();
+        if (!range.valid) { panel.innerHTML = card('時間範圍無效', `<p class="text-sm text-rose-600">${range.label}</p>`); return; }
+        const typeLabel = state.types.length === ALL_TYPES.length ? '全部賽制' : state.types.map(t => TYPE_LABEL[t]).join('、');
+        const filterLabel = `${range.label} · ${typeLabel}`;
+
+        const cached = state.analysisCache.has(analysisKey());
+        if (!cached) panel.innerHTML = card('分析中…', `<p class="text-sm text-slate-500">正在計算「${esc(filterLabel)}」的統計（含殘局重播）…</p>`);
+
+        const a = await getAnalysis(range);
+        if (my !== renderToken) return;
+        if (a.filteredCount === 0) { panel.innerHTML = card('無資料', `<p class="text-sm text-slate-500">篩選條件「${esc(filterLabel)}」下沒有對局。</p>`); return; }
+
+        // 戰術同期比較（需求 4）
+        let prevT = null, prevInfo = null;
+        if (state.tacticsCompare) {
+            const pr = resolvePrevRange(range);
+            if (pr) { const res = await getTacticsFor(pr); if (my !== renderToken) return; prevT = res.tactics; prevInfo = { label: pr.label, count: res.count }; }
         }
 
-        /** 清除所有已儲存設定 */
-        function clearSettings() {
-            try { localStorage.removeItem(LS_KEY); } catch (e) {}
+        const ov = a.overview, t = a.tactics, eg = a.endgames;
+        const html = [];
+        html.push(`<div class="text-sm text-slate-500">目前檢視：<span class="font-semibold text-slate-800">${esc(filterLabel)}</span>（${a.filteredCount} 局）</div>`);
+
+        // 1 綜述 + 視覺化（需求 2）
+        html.push(card('1 · 綜述', `
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+                ${stat('總場次', ov.total)}
+                ${stat('勝率', ov.winRate + '%', 'text-indigo-600')}
+                ${stat('積分區間', ov.ratingMin != null ? `${ov.ratingMin}–${ov.ratingMax}` : '—')}
+                ${stat('平均對手', ov.avgOpp ?? '—')}
+            </div>
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                <div>
+                    <div class="text-xs font-semibold text-slate-500 mb-1">勝負和分布</div>
+                    <div style="position:relative;height:13rem"><canvas id="chartOverview"></canvas></div>
+                </div>
+                <div>
+                    <div class="text-xs font-semibold text-slate-500 mb-1">執子勝率</div>
+                    <div style="position:relative;height:13rem"><canvas id="chartColor"></canvas></div>
+                </div>
+            </div>
+            <div class="mt-4">
+                <div class="text-xs font-semibold text-slate-500 mb-1">積分走勢（依賽制）</div>
+                <div style="position:relative;height:14rem"><canvas id="chartRating"></canvas></div>
+            </div>
+        `));
+
+        // 2 開局（排名 + 篩選）
+        html.push(card('2 · 開局排名', `
+            ${openingControls()}
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                <div>${openingTable('執白開局', a.openings.white)}</div>
+                <div>${openingTable('執黑開局', a.openings.black)}</div>
+            </div>
+        `, '名稱取自 PGN 的 ECOUrl 標頭；可調整最少局數與排序方式，讓勝率排名更具參考性。'));
+
+        // 3 戰術（含同期比較；比較一律以「每局占比%／每局平均」呈現，消除局數差異）
+        const curG = a.filteredCount;
+        const prvG = prevInfo ? prevInfo.count : 0;
+        const tacticsBody = prevT ? `
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                ${statCompare('給出將殺率', pctOf(t.mateDelivered, curG), pctOf(prevT.mateDelivered, prvG), 'text-emerald-600', '%')}
+                ${statCompare('被將殺率', pctOf(t.mateReceived, curG), pctOf(prevT.mateReceived, prvG), 'text-rose-600', '%', false)}
+                ${statCompare('逼降率', pctOf(t.resignsWon, curG), pctOf(prevT.resignsWon, prvG), 'text-emerald-600', '%')}
+                ${statCompare('認輸率', pctOf(t.resignsLost, curG), pctOf(prevT.resignsLost, prvG), 'text-rose-600', '%', false)}
+            </div>
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-3">
+                ${statCompare('超時贏率', pctOf(t.timeoutWon, curG), pctOf(prevT.timeoutWon, prvG), 'text-emerald-600', '%')}
+                ${statCompare('超時輸率', pctOf(t.timeoutLost, curG), pctOf(prevT.timeoutLost, prvG), 'text-rose-600', '%', false)}
+                ${statCompare('每局將軍', perGame(t.checksBy, curG), perGame(prevT.checksBy, prvG), 'text-slate-900', '')}
+                ${statCompare('每局被將軍', perGame(t.checksAgainst, curG), perGame(prevT.checksAgainst, prvG), 'text-slate-900', '', false)}
+            </div>` : `
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                ${stat('給出將殺', t.mateDelivered, 'text-emerald-600')}
+                ${stat('被將殺', t.mateReceived, 'text-rose-600')}
+                ${stat('我方將軍', t.checksBy)}
+                ${stat('被將軍', t.checksAgainst)}
+            </div>
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-3">
+                ${stat('逼降對手', t.resignsWon, 'text-emerald-600')}
+                ${stat('我方認輸', t.resignsLost, 'text-rose-600')}
+                ${stat('超時贏', t.timeoutWon, 'text-emerald-600')}
+                ${stat('超時輸', t.timeoutLost, 'text-rose-600')}
+            </div>`;
+        html.push(`<div class="card bg-white rounded-2xl border border-slate-200 shadow-sm p-4 sm:p-5 fade-in">
+            <div class="flex items-center justify-between gap-2 mb-3">
+                <h3 class="text-sm sm:text-base font-bold text-slate-900">3 · 戰術（將殺 · 將軍 · 收官）</h3>
+                <label class="inline-flex items-center gap-1.5 cursor-pointer select-none">
+                    <input id="tacticsCompareToggle" type="checkbox" class="w-4 h-4 accent-indigo-600" ${state.tacticsCompare ? 'checked' : ''}>
+                    <span class="text-xs text-slate-600">與前一期比較</span>
+                </label>
+            </div>
+            ${tacticsBody}
+            <p class="text-xs text-slate-400 mt-3">${prevT
+                ? `比較採「每局占比 %／每局平均」以消除兩期局數差異。當期 ${curG} 局 vs 前期 ${prevInfo.label}（${prevInfo.count} 局）；箭頭顏色代表變化是否為正面。`
+                : '勾選右上角可與「前一期（等長且緊鄰之前）」同期比較；比較值會換算成每局比率，不受局數多寡影響。'}</p>
+        </div>`);
+
+        // 4 殘局
+        if (eg.available) {
+            html.push(card('4 · 殘局（依子力類型 · 勝率）', `
+                <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    ${egStat('王兵殘局', eg.stat.kingPawn)}
+                    ${egStat('車兵殘局', eg.stat.rookPawn)}
+                    ${egStat('后翼殘局', eg.stat.queen)}
+                    ${egStat('輕子/其他', eg.stat.minor)}
+                </div>
+                <div class="mt-4" style="position:relative;height:12rem"><canvas id="chartEndgame"></canvas></div>
+            `, `共 ${eg.reached} 局進入殘局（終局非王棋子 ≤ ${ENDGAME_PIECE_MAX}）${eg.errors ? `，${eg.errors} 局棋步解析失敗已略過` : ''}。`));
         }
 
-        // ===== 目標玩家 ID：由路由 (#hash) / 查詢字串 (?user) / 記憶值 / 預設 解析 =====
-        const DEFAULT_USER = 'ttdragon0722';
+        panel.innerHTML = html.join('');
+        wireAnalysisControls();
+        // 延到下一畫格再畫圖：確保 Tailwind CDN 已產生高度樣式、版面已完成佈局，避免 canvas 高度為 0
+        requestAnimationFrame(() => requestAnimationFrame(() => { if (my === renderToken) renderCharts(a); }));
+    }
 
-        /** 從目前 URL 解析出使用者 ID，依優先序回退 */
-        function resolveUsername() {
-            // 1) Hash route：支援 #magnus 與 #/user/magnus 兩種寫法
-            const hash = decodeURIComponent(location.hash.replace(/^#\/?(?:user\/)?/, '')).trim();
-            if (hash) return hash;
-            // 2) Query string：?user=magnus
-            const q = new URLSearchParams(location.search).get('user');
-            if (q && q.trim()) return q.trim();
-            // 3) localStorage 記憶值
-            const saved = (loadSettings().username || '').trim();
-            if (saved) return saved;
-            // 4) 預設
-            return DEFAULT_USER;
+    function wireAnalysisControls() {
+        document.querySelectorAll('.o-sort').forEach(b => b.addEventListener('click', () => {
+            state.openingSort = b.dataset.osort; persistSettings(); renderAnalysis().catch(e => console.error(e));
+        }));
+        const minEl = document.getElementById('oMinGames');
+        if (minEl) minEl.addEventListener('change', e => {
+            const v = Math.max(1, Math.min(99, parseInt(e.target.value, 10) || 1));
+            state.openingMinGames = v; persistSettings(); renderAnalysis().catch(err => console.error(err));
+        });
+        const tog = document.getElementById('tacticsCompareToggle');
+        if (tog) tog.addEventListener('change', e => {
+            state.tacticsCompare = e.target.checked; persistSettings(); renderAnalysis().catch(err => console.error(err));
+        });
+    }
+
+    function renderCharts(a) {
+        Object.values(state.charts).forEach(c => c && c.destroy());
+        state.charts = {};
+        if (typeof Chart === 'undefined') { console.warn('Chart.js 未載入，略過圖表'); return; }
+        const mk = (id, cfg) => {
+            const el = document.getElementById(id);
+            if (!el) return null;
+            try { return new Chart(el, cfg); }
+            catch (e) { console.error('圖表建立失敗', id, e); return null; }
+        };
+
+        state.charts.ov = mk('chartOverview', {
+            type: 'doughnut',
+            data: { labels: ['勝', '負', '和'], datasets: [{ data: [a.overview.win, a.overview.loss, a.overview.draw], backgroundColor: ['#10b981', '#ef4444', '#94a3b8'], borderWidth: 0 }] },
+            options: { responsive: true, maintainAspectRatio: false, cutout: '62%', plugins: { legend: { position: 'right', labels: { boxWidth: 12, font: { size: 11 } } } } }
+        });
+
+        state.charts.col = mk('chartColor', {
+            type: 'bar',
+            data: { labels: ['執白', '執黑'], datasets: [{ label: '勝率', data: [a.overview.byColor.white.winRate, a.overview.byColor.black.winRate], backgroundColor: ['#f59e0b', '#334155'], borderRadius: 6 }] },
+            options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, max: 100, ticks: { callback: v => v + '%' } } } }
+        });
+
+        // 積分走勢（依賽制多線；x 為時間戳，預設 parsing 解析 {x,y}）
+        const datasets = Object.keys(a.overview.ratingByType).map(tc => ({
+            label: TYPE_LABEL[tc] || tc,
+            data: a.overview.ratingByType[tc],
+            borderColor: TYPE_COLOR[tc] || '#6366f1',
+            backgroundColor: TYPE_COLOR[tc] || '#6366f1',
+            borderWidth: 2, pointRadius: 0, tension: 0.25
+        }));
+        if (datasets.length) state.charts.rt = mk('chartRating', {
+            type: 'line', data: { datasets },
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                interaction: { mode: 'nearest', intersect: false },
+                plugins: { legend: { labels: { boxWidth: 12, font: { size: 11 } } },
+                    tooltip: { callbacks: { title: items => items.length ? new Date(items[0].parsed.x).toLocaleDateString() : '' } } },
+                scales: {
+                    x: { type: 'linear', offset: false, bounds: 'data',
+                        ticks: { maxTicksLimit: 6, callback: v => { const d = new Date(v); return `${d.getMonth() + 1}/${d.getDate()}`; } } },
+                    y: { ticks: { precision: 0 } }
+                }
+            }
+        });
+
+        if (a.endgames.available) {
+            const s = a.endgames.stat;
+            state.charts.eg = mk('chartEndgame', {
+                type: 'bar',
+                data: { labels: ['王兵', '車兵', '后翼', '輕子/其他'], datasets: [{ label: '殘局勝率', data: [s.kingPawn.winRate, s.rookPawn.winRate, s.queen.winRate, s.minor.winRate], backgroundColor: '#4f46e5', borderRadius: 6 }] },
+                options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, max: 100, ticks: { callback: v => v + '%' } } } }
+            });
         }
+    }
 
-        // 全域可變：下游所有比對函式 (getGameResult / analyzeGames / generateReport) 直接引用此變數
-        let username = resolveUsername();
+    // ======================================================================
+    //  控制器
+    // ======================================================================
+    function setLoading(on) {
+        const btn = document.getElementById('loadBtn');
+        document.getElementById('loadingIcon').classList.toggle('hidden', !on);
+        document.getElementById('loadBtnText').textContent = on ? '處理中…' : '載入';
+        btn.disabled = on; btn.classList.toggle('opacity-70', on); btn.classList.toggle('cursor-not-allowed', on);
+    }
+    function showStatus(msg, type) {
+        const el = document.getElementById('statusMessage');
+        el.className = 'text-sm font-medium p-3 rounded-xl mb-5 border';
+        el.textContent = msg; el.classList.remove('hidden');
+        const m = { info: ['bg-blue-50', 'text-blue-700', 'border-blue-200'], error: ['bg-red-50', 'text-red-700', 'border-red-200'], success: ['bg-emerald-50', 'text-emerald-700', 'border-emerald-200'] }[type] || [];
+        el.classList.add(...m);
+    }
+    function setUsername(name, pushHash) {
+        const clean = (name || '').trim();
+        state.username = clean;
+        document.getElementById('usernameInput').value = clean;
+        document.getElementById('playerNameLabel').textContent = clean || '—';
+        document.title = clean ? `${clean} | Chess.com 戰績分析` : 'Chess.com 戰績分析與 AI 資料匯出';
+        persistSettings();
+        if (pushHash) {
+            const cur = decodeURIComponent(location.hash.replace(/^#\/?(?:user\/)?/, '')).trim();
+            if (cur !== clean) location.hash = encodeURIComponent(clean);
+        }
+    }
+    async function handleLoad() {
+        const user = (document.getElementById('usernameInput').value || '').trim();
+        if (!user) { showStatus('請輸入 Chess.com 使用者 ID', 'error'); return; }
+        setUsername(user, true);
+        state.analysisCache.clear(); tacticsPrevCache.clear();
+        setLoading(true);
+        showStatus(`正在載入 ${user} 的對局（過去月份走快取，僅更新當月）…`, 'info');
+        try {
+            const { records, fetched, fromCache } = await loadOrUpdate(user);
+            state.records = records;
+            const badge = document.getElementById('cacheBadge');
+            badge.classList.remove('hidden');
+            badge.textContent = `· 共 ${records.length} 局`;
+            showStatus(`載入完成：${records.length} 局（${fromCache} 個月來自快取、${fetched} 個月重新抓取）。`, 'success');
+            document.getElementById('emptyState').classList.add('hidden');
+            refreshActiveTab();
+        } catch (e) {
+            console.error(e);
+            showStatus(`載入失敗：${e.message || e}`, 'error');
+        } finally { setLoading(false); }
+    }
+    function copyText() {
+        const ta = document.getElementById('outputText');
+        if (!ta.value) return alert('沒有可以複製的文字');
+        ta.select(); ta.setSelectionRange(0, 99999);
+        try {
+            if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(ta.value);
+            else document.execCommand('copy');
+            showStatus('已複製到剪貼簿。', 'success');
+        } catch (err) { alert('複製失敗，請手動全選複製。'); }
+        window.getSelection().removeAllRanges();
+    }
+    function downloadText() {
+        const text = document.getElementById('outputText').value;
+        if (!text) return alert('沒有可以下載的文字');
+        const range = resolveRange();
+        const tag = range.valid ? (state.window === 'all' ? 'all' : `${fmtDate(range.start || range.end)}_${fmtDate(range.end)}`) : 'range';
+        const blob = new Blob([text], { type: 'text/markdown;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url; a.download = `chess_ai_${state.username}_${tag}.md`;
+        document.body.appendChild(a); a.click(); document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    }
 
-        const DRAW_RESULTS = ['agreed', 'stalemate', 'repetition', 'insufficient', 'timevsinsufficient', '50move'];
+    // ======================================================================
+    //  初始化
+    // ======================================================================
+    function restoreSettings() {
+        const s = loadSettings();
+        if (s.window && WINDOWS.some(w => w[0] === s.window)) state.window = s.window;
+        if (Array.isArray(s.types) && s.types.length) state.types = ALL_TYPES.filter(t => s.types.includes(t));
+        if (state.types.length === 0) state.types = [...ALL_TYPES];
+        if (s.customStart) state.customStart = s.customStart;
+        if (s.customEnd) state.customEnd = s.customEnd;
+        if (s.pgnLimit != null) state.pgnLimit = parseInt(s.pgnLimit, 10) || 20;
+        if (s.pgnStrategy) state.pgnStrategy = s.pgnStrategy;
+        if (s.openingSort) state.openingSort = s.openingSort;
+        if (s.openingMinGames != null) state.openingMinGames = parseInt(s.openingMinGames, 10) || 3;
+        if (s.exportMode && EXPORT_MODES.some(m => m.id === s.exportMode)) state.exportMode = s.exportMode;
 
-        // 預設日期: 這個月
-        const today = new Date();
-        const firstDay = new Date(today.getFullYear(), today.getMonth(), 1);
-        document.getElementById('startDate').value = firstDay.toISOString().split('T')[0];
-        document.getElementById('endDate').value = today.toISOString().split('T')[0];
-
-        const usernameInput = document.getElementById('usernameInput');
-        const playerNameLabel = document.getElementById('playerNameLabel');
-
-        document.getElementById('fetchBtn').addEventListener('click', fetchData);
+        document.getElementById('customStart').value = state.customStart;
+        document.getElementById('customEnd').value = state.customEnd;
+        document.getElementById('customRange').classList.toggle('hidden', state.window !== 'custom');
+        document.getElementById('pgnLimit').value = String(state.pgnLimit);
+        document.getElementById('pgnStrategy').value = state.pgnStrategy;
+        document.getElementById('strategyHint').textContent = state.pgnStrategy === 'latest'
+            ? '直接取時間上最接近結束日的 N 局。' : '依勝/負/和比例分層，並在時間軸上均勻取樣。';
+    }
+    function wireEvents() {
+        document.getElementById('loadBtn').addEventListener('click', handleLoad);
+        document.getElementById('usernameInput').addEventListener('keydown', e => { if (e.key === 'Enter') handleLoad(); });
+        ['customStart', 'customEnd'].forEach(id => document.getElementById(id).addEventListener('change', e => {
+            state[id] = e.target.value; updateRangeLabel(); persistSettings();
+            if (state.records.length && resolveRange().valid) { state.analysisCache.clear(); tacticsPrevCache.clear(); refreshActiveTab(); }
+        }));
+        document.querySelectorAll('.tab-btn').forEach(b => b.addEventListener('click', () => {
+            state.tab = b.dataset.tab; syncTabs(); if (state.records.length) refreshActiveTab();
+        }));
+        document.getElementById('pgnLimit').addEventListener('change', e => {
+            state.pgnLimit = parseInt(e.target.value, 10); persistSettings();
+            if (state.records.length && state.tab === 'export') generateReport().catch(err => console.error(err));
+        });
+        document.getElementById('pgnStrategy').addEventListener('change', e => {
+            state.pgnStrategy = e.target.value;
+            document.getElementById('strategyHint').textContent = state.pgnStrategy === 'latest'
+                ? '直接取時間上最接近結束日的 N 局。' : '依勝/負/和比例分層，並在時間軸上均勻取樣。';
+            persistSettings();
+            if (state.records.length && state.tab === 'export') generateReport().catch(err => console.error(err));
+        });
+        document.getElementById('regenBtn').addEventListener('click', () => { if (state.records.length) generateReport().catch(e => console.error(e)); });
         document.getElementById('copyBtn').addEventListener('click', copyText);
         document.getElementById('downloadBtn').addEventListener('click', downloadText);
-
-        // ===== 路由 / ID 同步 =====
-
-        /** 套用新的使用者 ID，同步輸入框、標題、header、hash 路由 */
-        function applyUsername(name, { pushHash = true } = {}) {
-            const clean = (name || '').trim();
-            if (!clean) {
-                showStatus('請輸入 Chess.com 使用者 ID', 'error');
-                return;
-            }
-            username = clean;
-            usernameInput.value = clean;
-            if (playerNameLabel) playerNameLabel.textContent = clean;
-            document.title = `${clean} | Chess.com 戰績分析`;
-            saveSettings({ username: clean }); // 記憶最後使用的帳號
-
-            const current = decodeURIComponent(location.hash.replace(/^#\/?(?:user\/)?/, '')).trim();
-            if (pushHash && current !== clean) {
-                location.hash = encodeURIComponent(clean); // 更新路由（值相同不會重入）
-            }
-        }
-
-        // 初始化：依目前 URL 帶入，不重複寫 hash
-        applyUsername(resolveUsername(), { pushHash: false });
-
-        // 套用按鈕 / Enter
-        document.getElementById('goBtn').addEventListener('click', () => applyUsername(usernameInput.value));
-        usernameInput.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter') applyUsername(usernameInput.value);
+        document.getElementById('clearCacheBtn').addEventListener('click', () => {
+            if (state.username) clearCache(state.username);
+            try { localStorage.removeItem(SETTINGS_KEY); } catch (e) {}
+            state.records = []; state.analysisCache.clear(); tacticsPrevCache.clear();
+            document.getElementById('analysisPanel').classList.add('hidden');
+            document.getElementById('exportPanel').classList.add('hidden');
+            document.getElementById('emptyState').classList.remove('hidden');
+            document.getElementById('cacheBadge').classList.add('hidden');
+            showStatus('已清除本機快取與記憶設定。', 'success');
         });
-
-        // 監聽路由變化（瀏覽器上一頁/下一頁、手動改網址列 hash）
-        window.addEventListener('hashchange', () => applyUsername(resolveUsername(), { pushHash: false }));
-
-        // 切換策略時更新提示文字
-        document.getElementById('pgnStrategy').addEventListener('change', (e) => {
-            const hint = document.getElementById('strategyHint');
-            hint.innerText = e.target.value === 'latest'
-                ? '直接取時間上最接近結束日的 N 局。'
-                : '依勝/負/和比例分層，並在時間軸上均勻取樣。';
+        window.addEventListener('hashchange', () => {
+            const u = resolveUsername();
+            if (u && u !== state.username) { setUsername(u, false); handleLoad(); }
         });
-
-        // ===== 篩選設定的還原與持久化 =====
-
-        /** 從 localStorage 還原賽制勾選、PGN 數量與策略 */
-        function restoreFilters() {
-            const s = loadSettings();
-
-            if (Array.isArray(s.gameTypes)) {
-                document.querySelectorAll('.game-type-cb').forEach(cb => {
-                    cb.checked = s.gameTypes.includes(cb.value);
-                });
-            }
-
-            const limitEl = document.getElementById('pgnLimit');
-            if (s.pgnLimit != null && [...limitEl.options].some(o => o.value === String(s.pgnLimit))) {
-                limitEl.value = String(s.pgnLimit);
-            }
-
-            const strategyEl = document.getElementById('pgnStrategy');
-            if (s.pgnStrategy && [...strategyEl.options].some(o => o.value === s.pgnStrategy)) {
-                strategyEl.value = s.pgnStrategy;
-                strategyEl.dispatchEvent(new Event('change')); // 連動更新提示文字
-            }
-        }
-
-        /** 將目前篩選設定寫入 localStorage */
-        function persistFilters() {
-            saveSettings({
-                gameTypes: Array.from(document.querySelectorAll('.game-type-cb:checked')).map(cb => cb.value),
-                pgnLimit: document.getElementById('pgnLimit').value,
-                pgnStrategy: document.getElementById('pgnStrategy').value
-            });
-        }
-
-        // 任一篩選變更即持久化
-        document.querySelectorAll('.game-type-cb').forEach(cb => cb.addEventListener('change', persistFilters));
-        document.getElementById('pgnLimit').addEventListener('change', persistFilters);
-        document.getElementById('pgnStrategy').addEventListener('change', persistFilters);
-
-        // 啟動時還原 (須在上述監聽綁定後執行)
-        restoreFilters();
-
-        // 清除已儲存設定：清空記憶並回復預設帳號
-        document.getElementById('clearStorageBtn').addEventListener('click', () => {
-            clearSettings();
-            applyUsername(DEFAULT_USER, { pushHash: false });
-            showStatus('已清除本機儲存的帳號與篩選設定。', 'success');
-        });
-
-        async function fetchData() {
-            // 防呆：抓取前以輸入框內容為準，確保與全域 username 一致
-            const typed = (usernameInput.value || '').trim();
-            if (typed && typed !== username) applyUsername(typed);
-            if (!username) {
-                showStatus('請先輸入 Chess.com 使用者 ID', 'error');
-                return;
-            }
-
-            const startVal = document.getElementById('startDate').value;
-            const endVal = document.getElementById('endDate').value;
-
-            if (!startVal || !endVal) {
-                showStatus('請選擇完整的開始與結束日期', 'error');
-                return;
-            }
-
-            const startDate = new Date(startVal + 'T00:00:00');
-            const endDate = new Date(endVal + 'T23:59:59');
-
-            if (startDate > endDate) {
-                showStatus('開始日期不能晚於結束日期', 'error');
-                return;
-            }
-
-            const selectedTypes = Array.from(document.querySelectorAll('.game-type-cb:checked')).map(cb => cb.value);
-            if (selectedTypes.length === 0) {
-                showStatus('請至少選擇一種賽制類型來進行分析', 'error');
-                return;
-            }
-
-            // 計算前期時間 (往前回推相同長度的時間範圍)
-            const diffTime = endDate.getTime() - startDate.getTime();
-            const prevStartDate = new Date(startDate.getTime() - diffTime - 1000);
-            const prevEndDate = new Date(startDate.getTime() - 1000);
-
-            setLoading(true);
-            showStatus(`正在向 Chess.com 請求 ${username} 的對局並計算進階比對數據中，請稍候...`, 'info');
-
-            try {
-                const monthsToFetch = getMonthsInRange(prevStartDate, endDate);
-
-                let allGames = [];
-                let archiveErrors = 0;
-                for (const item of monthsToFetch) {
-                    const url = `https://api.chess.com/pub/player/${username}/games/${item.year}/${item.month}`;
-                    try {
-                        const response = await fetch(url);
-                        if (response.status === 404) {
-                            // 該月無資料或帳號不存在；繼續嘗試其他月份
-                            archiveErrors++;
-                            continue;
-                        }
-                        if (response.ok) {
-                            const data = await response.json();
-                            if (data.games && Array.isArray(data.games)) {
-                                allGames = allGames.concat(data.games);
-                            }
-                        }
-                    } catch (e) {
-                        console.warn(`Failed to fetch ${item.year}/${item.month}`, e);
-                    }
-                }
-
-                if (allGames.length === 0) {
-                    showStatus(`查無 ${username} 在此區間的任何對局。請確認帳號 ID 是否正確、或調整日期範圍。`, 'error');
-                    return;
-                }
-
-                const currentGames = filterGamesByTime(allGames, startDate, endDate);
-                const prevGames = filterGamesByTime(allGames, prevStartDate, prevEndDate);
-
-                const currentStats = analyzeGames(currentGames, selectedTypes);
-                const prevStats = analyzeGames(prevGames, selectedTypes);
-
-                const pgnLimit = parseInt(document.getElementById('pgnLimit').value, 10);
-                const pgnStrategy = document.getElementById('pgnStrategy').value;
-
-                const reportInfo = generateReport(currentStats, prevStats, currentGames, {
-                    curStart: startVal, curEnd: endVal,
-                    prevStart: prevStartDate.toISOString().split('T')[0],
-                    prevEnd: prevEndDate.toISOString().split('T')[0]
-                }, selectedTypes, pgnLimit, pgnStrategy);
-
-                showStatus(`資料獲取成功！當期 ${currentGames.length} 局，前期 ${prevGames.length} 局。已輸出 ${reportInfo.pgnCount} 局 PGN。`, 'success');
-                document.getElementById('outputSection').classList.remove('hidden');
-
-                // 區塊顯示後再繪圖（canvas 需有實際版面尺寸）
-                renderCharts(currentStats, prevStats, selectedTypes);
-
-            } catch (error) {
-                console.error(error);
-                showStatus('擷取資料時發生錯誤，請稍後再試。', 'error');
-            } finally {
-                setLoading(false);
-            }
-        }
-
-        function getMonthsInRange(start, end) {
-            const months = new Set();
-            let current = new Date(start.getFullYear(), start.getMonth(), 1);
-            while (current <= end) {
-                const year = current.getFullYear();
-                const month = String(current.getMonth() + 1).padStart(2, '0');
-                months.add(`${year}-${month}`);
-                current.setMonth(current.getMonth() + 1);
-            }
-            return Array.from(months).map(m => {
-                const [y, mth] = m.split('-');
-                return { year: y, month: mth };
-            });
-        }
-
-        function filterGamesByTime(games, start, end) {
-            const startTs = Math.floor(start.getTime() / 1000);
-            const endTs = Math.floor(end.getTime() / 1000);
-            return games.filter(g => g.end_time >= startTs && g.end_time <= endTs)
-                        .sort((a, b) => a.end_time - b.end_time);
-        }
-
-        // 從目標玩家視角判斷單局結果: 'win' | 'loss' | 'draw'
-        function getGameResult(game) {
-            const isWhite = game.white.username.toLowerCase() === username.toLowerCase();
-            const myInfo = isWhite ? game.white : game.black;
-            const oppInfo = isWhite ? game.black : game.white;
-
-            if (myInfo.result === 'win') return 'win';
-            if (DRAW_RESULTS.includes(myInfo.result) || DRAW_RESULTS.includes(oppInfo.result)) return 'draw';
-            return 'loss';
-        }
-
-        function analyzeGames(games, selectedTypes) {
-            const stats = {};
-            selectedTypes.forEach(tc => {
-                stats[tc] = {
-                    total: 0, win: 0, loss: 0, draw: 0, endRating: null,
-                    win_timeout: 0, loss_timeout: 0,
-                    win_mate: 0, loss_mate: 0,
-                    win_resign: 0, loss_resign: 0,
-                    // 依執子顏色分項統計
-                    white: { total: 0, win: 0, loss: 0, draw: 0 },
-                    black: { total: 0, win: 0, loss: 0, draw: 0 }
-                };
-            });
-
-            games.forEach(game => {
-                const timeClass = game.time_class;
-                if (!stats[timeClass]) return;
-
-                const isWhite = game.white.username.toLowerCase() === username.toLowerCase();
-                const myInfo = isWhite ? game.white : game.black;
-                const oppInfo = isWhite ? game.black : game.white;
-
-                stats[timeClass].total++;
-                stats[timeClass].endRating = myInfo.rating;
-
-                const colorStats = isWhite ? stats[timeClass].white : stats[timeClass].black;
-                colorStats.total++;
-
-                const result = getGameResult(game);
-                if (result === 'win') {
-                    stats[timeClass].win++;
-                    colorStats.win++;
-                    if (oppInfo.result === 'timeout') stats[timeClass].win_timeout++;
-                    else if (oppInfo.result === 'checkmated') stats[timeClass].win_mate++;
-                    else if (oppInfo.result === 'resigned' || oppInfo.result === 'abandoned') stats[timeClass].win_resign++;
-                } else if (result === 'draw') {
-                    stats[timeClass].draw++;
-                    colorStats.draw++;
-                } else {
-                    stats[timeClass].loss++;
-                    colorStats.loss++;
-                    if (myInfo.result === 'timeout') stats[timeClass].loss_timeout++;
-                    else if (myInfo.result === 'checkmated') stats[timeClass].loss_mate++;
-                    else if (myInfo.result === 'resigned' || myInfo.result === 'abandoned') stats[timeClass].loss_resign++;
-                }
-            });
-
-            for (let tc in stats) {
-                stats[tc].winRate = stats[tc].total > 0
-                    ? parseFloat(((stats[tc].win / stats[tc].total) * 100).toFixed(2))
-                    : 0;
-
-                // 各色勝率 (以該色總場次為分母)
-                ['white', 'black'].forEach(color => {
-                    const c = stats[tc][color];
-                    c.winRate = c.total > 0
-                        ? parseFloat(((c.win / c.total) * 100).toFixed(2))
-                        : 0;
-                });
-            }
-
-            return stats;
-        }
-
-        // ===== PGN 選取演算法 =====
-
-        // 從已排序(時間遞增)的陣列中均勻取出 n 筆 (含頭尾、單筆時取最新)
-        function evenlySpacedSample(arr, n) {
-            if (n >= arr.length) return [...arr];
-            if (n <= 0) return [];
-            if (n === 1) return [arr[arr.length - 1]];
-            const picked = [];
-            const step = (arr.length - 1) / (n - 1);
-            for (let i = 0; i < n; i++) {
-                picked.push(arr[Math.round(i * step)]);
-            }
-            return Array.from(new Set(picked));
-        }
-
-        // 依各組大小按比例分配名額 (最大餘數法)，並以組大小封頂
-        function allocateCounts(groups, limit) {
-            const keys = Object.keys(groups).filter(k => groups[k].length > 0);
-            const total = keys.reduce((s, k) => s + groups[k].length, 0);
-            if (total === 0) return {};
-
-            const raw = keys.map(k => ({ k, exact: limit * groups[k].length / total }));
-            const alloc = {};
-            let used = 0;
-            raw.forEach(r => { alloc[r.k] = Math.floor(r.exact); used += alloc[r.k]; });
-
-            // 依小數部分大小分配剩餘名額
-            const remainder = limit - used;
-            const byFraction = [...raw].sort((a, b) =>
-                (b.exact - Math.floor(b.exact)) - (a.exact - Math.floor(a.exact)));
-            for (let i = 0; i < remainder && byFraction.length > 0; i++) {
-                alloc[byFraction[i % byFraction.length].k]++;
-            }
-
-            keys.forEach(k => { alloc[k] = Math.min(alloc[k], groups[k].length); });
-            return alloc;
-        }
-
-        // 從當期對局中選出要輸出 PGN 的對局
-        // games 已依時間遞增排序; limit=0 代表全部; strategy: 'latest' | 'representative'
-        function selectPgnGames(games, limit, strategy) {
-            if (!limit || limit >= games.length) return games;
-            if (limit <= 0) return [];
-
-            if (strategy === 'latest') {
-                return games.slice(games.length - limit); // 取最近 N 局，維持時間順序
-            }
-
-            // representative: 依勝/負/和分層，組內在時間軸上均勻取樣
-            const groups = { win: [], loss: [], draw: [] };
-            games.forEach(g => { groups[getGameResult(g)].push(g); });
-
-            const alloc = allocateCounts(groups, limit);
-            const picked = [];
-            Object.keys(groups).forEach(k => {
-                picked.push(...evenlySpacedSample(groups[k], alloc[k] || 0));
-            });
-
-            return picked.sort((a, b) => a.end_time - b.end_time);
-        }
-
-        function generateReport(current, prev, currentGames, dates, selectedTypes, pgnLimit, pgnStrategy) {
-            let text = `<context>\n`;
-            text += `目標玩家: ${username}\n`;
-            text += `當期時間: ${dates.curStart} 至 ${dates.curEnd}\n`;
-            text += `對比時間: ${dates.prevStart} 至 ${dates.prevEnd} (前一期相對區間)\n`;
-            text += `產出時間: ${new Date().toLocaleString()}\n\n`;
-
-            text += `--- 【重點對比數據 (vs 前一期)】 ---\n`;
-            text += `(格式說明: 當期數據 [前期數據 | 變化量])\n\n`;
-
-            selectedTypes.forEach(tc => {
-                const curS = current[tc];
-                const prvS = prev[tc];
-
-                const diffTotal = curS.total - prvS.total;
-                const diffWinRate = (curS.winRate - prvS.winRate).toFixed(2);
-
-                const curR = curS.endRating || '無資料';
-                const prvR = prvS.endRating || '無資料';
-                let diffR = 'N/A';
-                if (typeof curR === 'number' && typeof prvR === 'number') {
-                    const diff = curR - prvR;
-                    diffR = diff > 0 ? `+${diff}` : diff;
-                }
-
-                const fmtDiff = (c, p) => {
-                    const d = c - p;
-                    return d > 0 ? `+${d}` : `${d}`;
-                };
-
-                // 分色勝率變化 (帶 + 號)
-                const fmtRateDiff = (c, p) => {
-                    const d = (c - p).toFixed(2);
-                    return d > 0 ? `+${d}` : `${d}`;
-                };
-
-                // 單色一行: W:總 勝-負-和 (勝率%)
-                const colorLine = (label, cur, prv) => {
-                    return `   - ${label}: ${cur.total} 場 ${cur.win}-${cur.loss}-${cur.draw} (勝率 ${cur.winRate}%)` +
-                           ` (上期: ${prv.total} 場 ${prv.win}-${prv.loss}-${prv.draw} 勝率 ${prv.winRate}%` +
-                           ` | 勝率變化: ${fmtRateDiff(cur.winRate, prv.winRate)}%)\n`;
-                };
-
-                text += `[${tc.toUpperCase()} 賽制]\n`;
-                text += ` • 總場次 : ${curS.total} 場 (上期: ${prvS.total} 場 | 變化: ${diffTotal > 0 ? '+' : ''}${diffTotal})\n`;
-                text += ` • 勝率 : ${curS.winRate}% (上期: ${prvS.winRate}% | 變化: ${diffWinRate > 0 ? '+' : ''}${diffWinRate}%)\n`;
-                text += ` • 結算積分: ${curR} (上期: ${prvR} | 變化: ${diffR})\n`;
-                text += ` • 執子分項 (勝-負-和):\n`;
-                text += colorLine('白方', curS.white, prvS.white);
-                text += colorLine('黑方', curS.black, prvS.black);
-                text += ` • 超時勝負: 贏 ${curS.win_timeout} / 輸 ${curS.loss_timeout} (上期: 贏 ${prvS.win_timeout} / 輸 ${prvS.loss_timeout} | 變化: 贏 ${fmtDiff(curS.win_timeout, prvS.win_timeout)} 輸 ${fmtDiff(curS.loss_timeout, prvS.loss_timeout)})\n`;
-                text += ` • 將殺勝負: 贏 ${curS.win_mate} / 輸 ${curS.loss_mate} (上期: 贏 ${prvS.win_mate} / 輸 ${prvS.loss_mate} | 變化: 贏 ${fmtDiff(curS.win_mate, prvS.win_mate)} 輸 ${fmtDiff(curS.loss_mate, prvS.loss_mate)})\n`;
-                text += ` • 放棄勝負: 贏 ${curS.win_resign} / 輸 ${curS.loss_resign} (上期: 贏 ${prvS.win_resign} / 輸 ${prvS.loss_resign} | 變化: 贏 ${fmtDiff(curS.win_resign, prvS.win_resign)} 輸 ${fmtDiff(curS.loss_resign, prvS.loss_resign)})\n`;
-                text += ` • 和棋場次: ${curS.draw} 場 (上期: ${prvS.draw} 場 | 變化: ${fmtDiff(curS.draw, prvS.draw)})\n\n`;
-            });
-
-            text += `</context>\n\n`;
-
-            // 僅保留選定賽制的當期對局，再依策略挑選
-            const eligibleGames = currentGames.filter(g => selectedTypes.includes(g.time_class));
-            const selectedGames = selectPgnGames(eligibleGames, pgnLimit, pgnStrategy);
-
-            const strategyLabel = pgnStrategy === 'latest' ? '最新優先' : '代表性取樣 (依勝負分層)';
-            const limitLabel = pgnLimit ? `上限 ${pgnLimit} 局` : '全部';
-
-            text += `--- 【當期詳細對局 PGN 紀錄】 ---\n`;
-            text += `(選取策略: ${strategyLabel} | ${limitLabel} | 符合條件共 ${eligibleGames.length} 局，已輸出 ${selectedGames.length} 局)\n\n`;
-
-            if (selectedGames.length === 0) {
-                text += `此期間無符合篩選條件的對戰紀錄。\n`;
-            } else {
-                selectedGames.forEach((game, idx) => {
-                    const timeClass = game.time_class;
-                    const resultZh = { win: '勝', loss: '負', draw: '和' }[getGameResult(game)];
-                    if (game.pgn) {
-                        text += `[對局 ${idx + 1} - ${timeClass.toUpperCase()} - ${resultZh}]\n`;
-                        text += `${game.pgn}\n\n`;
-                    } else {
-                        text += `[對局 ${idx + 1} - ${timeClass.toUpperCase()} - ${resultZh}] 無 PGN 資料 (網址: ${game.url})\n\n`;
-                    }
-                });
-            }
-
-            document.getElementById('outputText').value = text;
-            return { pgnCount: selectedGames.length };
-        }
-
-        // ===== 圖表渲染 (Chart.js) =====
-        const chartInstances = {}; // 保存實例，重繪前先 destroy
-
-        /** 依當期/前期統計繪製三張圖；Chart.js 未載入則隱藏圖表區 */
-        function renderCharts(current, prev, selectedTypes) {
-            const chartSection = document.getElementById('chartSection');
-
-            if (typeof Chart === 'undefined') {
-                // CDN 載入失敗（離線等）：隱藏圖表區，不影響文字輸出
-                chartSection.classList.add('hidden');
-                return;
-            }
-            chartSection.classList.remove('hidden');
-
-            const labels = selectedTypes.map(tc => tc.toUpperCase());
-
-            // 銷毀既有實例，避免 canvas 重用報錯
-            Object.values(chartInstances).forEach(c => c && c.destroy());
-
-            const COLORS = {
-                cur: '#4f46e5', prev: '#cbd5e1',
-                win: '#10b981', loss: '#ef4444', draw: '#94a3b8',
-                white: '#f59e0b', black: '#334155'
-            };
-            const baseOpts = {
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: { legend: { labels: { boxWidth: 12, font: { size: 11 } } } }
-            };
-            const pctScale = { y: { beginAtZero: true, max: 100, ticks: { callback: v => v + '%' } } };
-
-            // 1) 勝率對比：當期 vs 前期
-            chartInstances.winRate = new Chart(document.getElementById('chartWinRate'), {
-                type: 'bar',
-                data: {
-                    labels,
-                    datasets: [
-                        { label: '當期勝率', data: selectedTypes.map(tc => current[tc].winRate), backgroundColor: COLORS.cur },
-                        { label: '前期勝率', data: selectedTypes.map(tc => prev[tc].winRate), backgroundColor: COLORS.prev }
-                    ]
-                },
-                options: { ...baseOpts, scales: pctScale }
-            });
-
-            // 2) 當期勝/負/和分布 (堆疊場次)
-            chartInstances.wld = new Chart(document.getElementById('chartWLD'), {
-                type: 'bar',
-                data: {
-                    labels,
-                    datasets: [
-                        { label: '勝', data: selectedTypes.map(tc => current[tc].win), backgroundColor: COLORS.win },
-                        { label: '負', data: selectedTypes.map(tc => current[tc].loss), backgroundColor: COLORS.loss },
-                        { label: '和', data: selectedTypes.map(tc => current[tc].draw), backgroundColor: COLORS.draw }
-                    ]
-                },
-                options: {
-                    ...baseOpts,
-                    scales: { x: { stacked: true }, y: { stacked: true, beginAtZero: true, ticks: { precision: 0 } } }
-                }
-            });
-
-            // 3) 執子勝率：白方 vs 黑方
-            chartInstances.color = new Chart(document.getElementById('chartColor'), {
-                type: 'bar',
-                data: {
-                    labels,
-                    datasets: [
-                        { label: '白方勝率', data: selectedTypes.map(tc => current[tc].white.winRate), backgroundColor: COLORS.white },
-                        { label: '黑方勝率', data: selectedTypes.map(tc => current[tc].black.winRate), backgroundColor: COLORS.black }
-                    ]
-                },
-                options: { ...baseOpts, scales: pctScale }
-            });
-        }
-
-        function setLoading(isLoading) {
-            const btn = document.getElementById('fetchBtn');
-            const icon = document.getElementById('loadingIcon');
-            const text = document.getElementById('btnText');
-            if (isLoading) {
-                btn.disabled = true;
-                btn.classList.add('opacity-75', 'cursor-not-allowed');
-                icon.classList.remove('hidden');
-                text.innerText = '處理中...';
-            } else {
-                btn.disabled = false;
-                btn.classList.remove('opacity-75', 'cursor-not-allowed');
-                icon.classList.add('hidden');
-                text.innerText = '抓取並深度比對資料';
-            }
-        }
-
-        function showStatus(msg, type) {
-            const el = document.getElementById('statusMessage');
-            el.className = 'text-sm font-medium p-3 rounded-lg mb-6 border';
-            el.innerText = msg;
-            el.classList.remove('hidden');
-            if (type === 'info') el.classList.add('bg-blue-50', 'text-blue-700', 'border-blue-200');
-            else if (type === 'error') el.classList.add('bg-red-50', 'text-red-700', 'border-red-200');
-            else if (type === 'success') el.classList.add('bg-emerald-50', 'text-emerald-700', 'border-emerald-200');
-        }
-
-        function copyText() {
-            const textarea = document.getElementById('outputText');
-            if (!textarea.value) return alert('沒有可以複製的文字');
-            textarea.select();
-            textarea.setSelectionRange(0, 99999);
-            try {
-                if (navigator.clipboard && window.isSecureContext) {
-                    navigator.clipboard.writeText(textarea.value);
-                } else {
-                    document.execCommand('copy');
-                }
-                alert('文字已成功複製至剪貼簿！');
-            } catch (err) {
-                alert('複製失敗，請手動全選複製。');
-            }
-            window.getSelection().removeAllRanges();
-        }
-
-        function downloadText() {
-            const text = document.getElementById('outputText').value;
-            if (!text) return alert('沒有可以下載的文字');
-            const startVal = document.getElementById('startDate').value;
-            const endVal = document.getElementById('endDate').value;
-            const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `chess_ai_context_${username}_${startVal}_to_${endVal}.txt`;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
-        }
+    }
+    (function init() {
+        restoreSettings();
+        buildFilterButtons();
+        buildModeButtons();
+        syncTabs();
+        updateRangeLabel();
+        wireEvents();
+        const u = resolveUsername();
+        if (u) { setUsername(u, false); handleLoad(); }
+    })();
     </script>
 </body>
 </html>
