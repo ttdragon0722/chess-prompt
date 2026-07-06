@@ -98,6 +98,7 @@
         <div class="inline-flex p-1 bg-slate-200/70 rounded-xl mb-5">
             <button data-tab="analysis" class="tab-btn seg-btn px-4 sm:px-5 py-2 rounded-lg text-sm font-semibold cursor-pointer">📊 深度分析</button>
             <button data-tab="export" class="tab-btn seg-btn px-4 sm:px-5 py-2 rounded-lg text-sm font-semibold cursor-pointer">🤖 AI 資料匯出</button>
+            <button data-tab="games" class="tab-btn seg-btn px-4 sm:px-5 py-2 rounded-lg text-sm font-semibold cursor-pointer">📋 棋局清單</button>
         </div>
 
         <div id="statusMessage" class="hidden text-sm font-medium p-3 rounded-xl mb-5 border"></div>
@@ -108,6 +109,8 @@
         </div>
 
         <section id="analysisPanel" class="hidden space-y-5"></section>
+
+        <section id="gamesPanel" class="hidden space-y-3 fade-in"></section>
 
         <section id="exportPanel" class="hidden space-y-5">
             <!-- 分析模式 -->
@@ -930,12 +933,14 @@
         });
         document.getElementById('analysisPanel').classList.toggle('hidden', state.tab !== 'analysis' || !state.records.length);
         document.getElementById('exportPanel').classList.toggle('hidden', state.tab !== 'export' || !state.records.length);
+        document.getElementById('gamesPanel').classList.toggle('hidden', state.tab !== 'games' || !state.records.length);
     }
     function refreshActiveTab() {
         if (!state.records.length) return;
         document.getElementById('emptyState').classList.add('hidden');
         syncTabs();
         if (state.tab === 'analysis') renderAnalysis().catch(e => console.error(e));
+        else if (state.tab === 'games') renderGamesList();
         else generateReport().catch(e => console.error(e));
     }
 
@@ -1307,6 +1312,115 @@
         document.getElementById('strategyHint').textContent = state.pgnStrategy === 'latest'
             ? '直接取時間上最接近結束日的 N 局。' : '依勝/負/和比例分層，並在時間軸上均勻取樣。';
     }
+    // ======================================================================
+    //  棋局清單子頁面（需求：清單顯示棋局內容、點擊跳該對局連結）
+    // ======================================================================
+    const GAMES_PAGE = 30;                        // 每批渲染局數，攤平 DOM 建構成本
+    const gamesListState = { list: [], rendered: 0 };
+
+    function escGames(s) {
+        return String(s ?? '').replace(/[&<>"']/g, c =>
+            ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    }
+    // record 未存對手名，即時從 PGN 標頭解析（相容既有快取）
+    function oppNameFromPgn(r) {
+        const side = r.color === 'white' ? 'Black' : 'White';
+        const m = new RegExp(`\\[${side} "([^"]+)"\\]`).exec(r.pgn || '');
+        return m ? m[1] : '對手';
+    }
+    // 重用既有 ensureSan()，組出 "1. e4 e5 2. Nf3 …" 前 N 手預覽
+    function movePreview(r, maxPlies) {
+        const san = ensureSan(r);
+        if (!san.length) return '';
+        let out = '';
+        for (let i = 0; i < Math.min(san.length, maxPlies); i++) {
+            if (i % 2 === 0) out += `${i / 2 + 1}. `;
+            out += san[i] + ' ';
+        }
+        return out.trim() + (san.length > maxPlies ? ' …' : '');
+    }
+
+    // 單局卡片：整張為連結，點擊於新分頁開啟 chess.com 該對局
+    function gameCardHtml(r) {
+        const badge = {
+            win:  { t: '勝', c: 'bg-emerald-100 text-emerald-700' },
+            loss: { t: '負', c: 'bg-rose-100 text-rose-700' },
+            draw: { t: '和', c: 'bg-slate-200 text-slate-600' }
+        }[r.result];
+
+        const date = new Date(r.end_time * 1000).toLocaleString('zh-TW',
+            { year: '2-digit', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+        const colorZh = r.color === 'white' ? '⚪ 執白' : '⚫ 執黑';
+        const typeZh  = TYPE_LABEL[r.time_class] || r.time_class;
+        const oppName = escGames(oppNameFromPgn(r));
+        const opening = escGames(r.opening || '未知開局');
+        const preview = escGames(movePreview(r, 12));
+        const rating  = (typeof r.myRating === 'number' && typeof r.oppRating === 'number')
+            ? `${r.myRating} vs ${r.oppRating}` : '';
+
+        return `
+        <a href="${escGames(r.url)}" target="_blank" rel="noopener"
+           class="card block bg-white rounded-xl border border-slate-200 p-3.5 hover:border-indigo-300">
+            <div class="flex items-center gap-2 mb-1.5">
+                <span class="shrink-0 w-7 h-7 rounded-lg text-xs font-bold flex items-center justify-center ${badge.c}">${badge.t}</span>
+                <div class="min-w-0 flex-1">
+                    <p class="text-sm font-semibold text-slate-800 truncate">vs ${oppName}</p>
+                    <p class="text-[11px] text-slate-400">${typeZh} · ${colorZh} · ${date}</p>
+                </div>
+                <span class="shrink-0 text-[11px] text-slate-400 font-mono">${rating}</span>
+            </div>
+            <p class="text-[11px] text-indigo-500 font-medium mb-1 truncate">${opening}</p>
+            ${preview ? `<p class="text-[11px] font-mono text-slate-500 leading-relaxed break-words">${preview}</p>` : ''}
+        </a>`;
+    }
+
+    // 依 GAMES_PAGE 分批 append，附「載入更多」
+    function appendGamesChunk() {
+        const body = document.getElementById('gamesListBody');
+        const wrap = document.getElementById('gamesMoreWrap');
+        if (!body) return;
+        const { list, rendered } = gamesListState;
+        const end = Math.min(rendered + GAMES_PAGE, list.length);
+        body.insertAdjacentHTML('beforeend', list.slice(rendered, end).map(gameCardHtml).join(''));
+        gamesListState.rendered = end;
+        if (end < list.length) {
+            wrap.innerHTML = `<button id="gamesMoreBtn" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 text-sm py-2 px-5 rounded-lg transition cursor-pointer">載入更多（剩 ${list.length - end}）</button>`;
+            document.getElementById('gamesMoreBtn').addEventListener('click', appendGamesChunk);
+        } else {
+            wrap.innerHTML = '';
+        }
+    }
+
+    // 主渲染：套用共用篩選（時間範圍 + 賽制複選），新到舊排序
+    function renderGamesList() {
+        const panel = document.getElementById('gamesPanel');
+        const range = resolveRange();
+        const games = range.valid
+            ? filterByRange(state.records, range, state.types).slice().sort((a, b) => b.end_time - a.end_time)
+            : [];
+
+        if (!range.valid) {
+            panel.innerHTML = `<div class="text-center py-16 text-rose-400 text-sm">${escGames(range.label)}</div>`;
+            Object.assign(gamesListState, { list: [], rendered: 0 });
+            return;
+        }
+        if (games.length === 0) {
+            panel.innerHTML = `<div class="text-center py-16 text-slate-400 text-sm">此範圍沒有符合的對局。</div>`;
+            Object.assign(gamesListState, { list: [], rendered: 0 });
+            return;
+        }
+
+        Object.assign(gamesListState, { list: games, rendered: 0 });
+        panel.innerHTML = `
+            <div class="card bg-white rounded-2xl border border-slate-200 shadow-sm px-4 py-3 flex items-center justify-between">
+                <p class="text-sm font-semibold text-slate-700">共 <span class="text-indigo-600">${games.length}</span> 局</p>
+                <p class="text-[11px] text-slate-400">點擊任一局於 Chess.com 開啟</p>
+            </div>
+            <div id="gamesListBody" class="space-y-2.5"></div>
+            <div id="gamesMoreWrap" class="text-center pt-1"></div>`;
+        appendGamesChunk();
+    }
+
     function wireEvents() {
         document.getElementById('loadBtn').addEventListener('click', handleLoad);
         document.getElementById('usernameInput').addEventListener('keydown', e => { if (e.key === 'Enter') handleLoad(); });
@@ -1337,6 +1451,7 @@
             state.records = []; state.analysisCache.clear(); tacticsPrevCache.clear();
             document.getElementById('analysisPanel').classList.add('hidden');
             document.getElementById('exportPanel').classList.add('hidden');
+            document.getElementById('gamesPanel').classList.add('hidden');
             document.getElementById('emptyState').classList.remove('hidden');
             document.getElementById('cacheBadge').classList.add('hidden');
             showStatus('已清除本機快取與記憶設定。', 'success');
