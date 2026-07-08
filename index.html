@@ -154,6 +154,16 @@
                 </div>
                 <textarea id="outputText" readonly class="w-full h-[52vh] min-h-[320px] p-3 sm:p-4 font-mono text-xs sm:text-sm border border-slate-300 rounded-xl bg-slate-50 focus:outline-none focus:ring-2 focus:ring-indigo-500 shadow-inner resize-y"></textarea>
             </div>
+
+            <!-- 本次匯出納入的 PGN 棋局：idx 對齊 markdown「對局 N」，點卡片回看對局 -->
+            <div id="exportGamesCard" class="card bg-white rounded-2xl border border-slate-200 shadow-sm p-4 sm:p-5 hidden">
+                <div class="flex items-center justify-between mb-1">
+                    <h3 class="text-sm sm:text-base font-bold text-slate-900">本次輸出的 PGN 棋局（<span id="exportGamesCount">0</span> 局）</h3>
+                    <p class="text-[11px] text-slate-400">點卡片回看對局</p>
+                </div>
+                <p class="text-[11px] text-slate-500 mb-3 leading-relaxed">AI 診斷會以「<span class="font-semibold text-indigo-600">對局 N</span>」引用棋譜；下方 <span class="font-semibold">#N</span> 與其一致，點擊即於 Chess.com 開啟該局複盤。</p>
+                <div id="exportGamesBody" class="grid grid-cols-1 sm:grid-cols-2 gap-2.5"></div>
+            </div>
         </section>
 
         <footer class="mt-8 text-center text-[11px] text-slate-400 space-y-1">
@@ -584,9 +594,12 @@
         return processOpenings(rows).slice(0, n).map((o, i) =>
             `${i + 1}. ${o.name}：${o.total} 局，勝率 ${o.winRate}%（${o.win}-${o.loss}-${o.draw}）`).join('\n');
     }
+    // 記錄「本次匯出報告實際納入 PGN 的對局」，順序＝markdown 中「對局 N」的編號
+    let lastExportGames = [];
     function pgnSection(games, note) {
         const sorted = games.slice().sort((a, b) => a.end_time - b.end_time);
         const selected = selectPgnGames(sorted, state.pgnLimit, state.pgnStrategy);
+        lastExportGames = selected.slice(); // 攔截：卡片 idx 將與此順序一致
         let s = `## 棋譜樣本（PGN）\n> ${note}｜符合 ${games.length} 局，輸出 ${selected.length} 局\n\n`;
         if (!selected.length) return s + '（無符合條件的棋譜）\n\n';
         selected.forEach((g, i) => {
@@ -801,12 +814,13 @@
     // 依所選模式產生結構化提示詞
     async function generateReport() {
         const out = document.getElementById('outputText');
+        lastExportGames = []; // 每次重算前重置，避免殘留上一份報告的棋局
         const range = resolveRange();
-        if (!range.valid) { out.value = `無法產生：時間範圍無效（${range.label}）。`; return; }
+        if (!range.valid) { out.value = `無法產生：時間範圍無效（${range.label}）。`; renderExportGames(); return; }
 
         const curRecs = filterByRange(state.records, range, state.types);
         const types = ALL_TYPES.filter(tc => state.types.includes(tc) && curRecs.some(r => r.time_class === tc));
-        if (curRecs.length === 0 || types.length === 0) { out.value = `此區間（${range.label}）無符合條件的對局。`; return; }
+        if (curRecs.length === 0 || types.length === 0) { out.value = `此區間（${range.label}）無符合條件的對局。`; renderExportGames(); return; }
 
         const prevRange = resolvePrevRange(range);
         const prevRecs = prevRange ? filterByRange(state.records, prevRange, state.types) : [];
@@ -829,6 +843,7 @@
 
         const builder = MODE_BUILDERS[state.exportMode] || buildComprehensive;
         out.value = builder(ctx);
+        renderExportGames(); // 依 lastExportGames 渲染可點擊的棋局卡片
     }
 
     // ======================================================================
@@ -1391,9 +1406,49 @@
         }
     }
 
+    // ---- AI 匯出：本次納入的 PGN 棋局卡片（idx 對齊 markdown「對局 N」）----
+    function exportGameCardHtml(g, idx) {
+        const badge = {
+            win:  { t: '勝', c: 'bg-emerald-100 text-emerald-700' },
+            loss: { t: '負', c: 'bg-rose-100 text-rose-700' },
+            draw: { t: '和', c: 'bg-slate-200 text-slate-600' }
+        }[g.result];
+        const typeZh  = TYPE_LABEL[g.time_class] || g.time_class;
+        const oppName = escGames(oppNameFromPgn(g));
+        const opening = escGames(g.opening || '未知開局');
+        const date    = new Date(g.end_time * 1000).toLocaleDateString('zh-TW', { month: '2-digit', day: '2-digit' });
+        const egTag   = g._endgameType
+            ? `<span class="shrink-0 text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5">殘局·${EG_ZH[g._endgameType]}</span>` : '';
+        return `
+        <a href="${escGames(g.url)}" target="_blank" rel="noopener"
+           class="card block bg-white rounded-xl border border-slate-200 p-3 hover:border-indigo-300">
+            <div class="flex items-center gap-2">
+                <span class="shrink-0 min-w-[2.4rem] h-8 px-1.5 rounded-lg bg-indigo-600 text-white text-sm font-bold flex items-center justify-center">#${idx}</span>
+                <span class="shrink-0 w-7 h-7 rounded-lg text-xs font-bold flex items-center justify-center ${badge.c}">${badge.t}</span>
+                <div class="min-w-0 flex-1">
+                    <p class="text-sm font-semibold text-slate-800 truncate">vs ${oppName}</p>
+                    <p class="text-[11px] text-slate-400">${typeZh} · ${date}</p>
+                </div>
+            </div>
+            <div class="flex items-center gap-2 mt-1.5">
+                <span class="text-[11px] text-indigo-500 font-medium truncate flex-1">${opening}</span>
+                ${egTag}
+            </div>
+        </a>`;
+    }
+    function renderExportGames() {
+        const card = document.getElementById('exportGamesCard');
+        const body = document.getElementById('exportGamesBody');
+        const countEl = document.getElementById('exportGamesCount');
+        if (!card || !body) return;
+        if (!lastExportGames.length) { card.classList.add('hidden'); body.innerHTML = ''; return; }
+        card.classList.remove('hidden');
+        countEl.textContent = lastExportGames.length;
+        body.innerHTML = lastExportGames.map((g, i) => exportGameCardHtml(g, i + 1)).join('');
+    }
+
     // 主渲染：套用共用篩選（時間範圍 + 賽制複選），新到舊排序
-    function renderGamesList() {
-        const panel = document.getElementById('gamesPanel');
+    function renderGamesList() {        const panel = document.getElementById('gamesPanel');
         const range = resolveRange();
         const games = range.valid
             ? filterByRange(state.records, range, state.types).slice().sort((a, b) => b.end_time - a.end_time)
